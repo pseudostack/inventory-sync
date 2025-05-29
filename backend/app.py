@@ -148,7 +148,7 @@ def logout():
 def trigger_update():
     try:
         result = subprocess.run(
-            ["python3", "/root/InventorySync/update_inventory.py"],
+            ["python3", "/root/inventory-sync/backend/update_inventory.py"],
             capture_output=True,
             text=True,
             check=True
