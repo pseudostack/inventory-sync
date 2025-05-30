@@ -12,9 +12,6 @@ import platform
 
 from ftplib import FTP
 
-
-
-
 # --- Configuration ---
 system_name = platform.system()
 
@@ -109,7 +106,18 @@ try:
 
     time.sleep(2)
 
-    # Step 5: Click 'Select All' checkbox
+    
+    print("Changing page size to 100...")
+
+    page_size_dropdown = WebDriverWait(driver, 15).until(
+        EC.element_to_be_clickable((By.CSS_SELECTOR, "select[data-cy='page-count']"))
+    )
+    driver.execute_script("arguments[0].value = '100'; arguments[0].dispatchEvent(new Event('change'));", page_size_dropdown)
+
+    # Wait for the page to refresh with 100 cars
+    time.sleep(3)
+
+    # Step 5: Click 'Select All' checkbox    
     print("Clicking select-all checkbox...")
     select_all = driver.find_element(By.ID, "select-all")
     driver.execute_script("""
