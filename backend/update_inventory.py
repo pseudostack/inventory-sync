@@ -32,6 +32,7 @@ FTP_HOST = "ftp.eddysauto.ca"
 FTP_USER = "berlinautosales.ca@berlinautosales.ca"
 FTP_PASS = "B2010luetooth5!"
 FTP_TARGET_PATH = "inventory.csv"
+FTP_CARFAX_DIR = "carfax"
 
 LOGIN_EMAIL = "farhad@berlinautosales.ca"
 LOGIN_PASS = "B2010luetooth5!"
@@ -106,16 +107,6 @@ try:
                 driver.execute_script("arguments[0].click();", box)
                 logging.info("✅ Enabled export field: %s", field_name)
 
-    # --- Verify 'links' and 'vin' are enabled ---
-    for field in ["links", "vin"]:
-        index = next((i for i, label in enumerate(labels) if label.text.strip().lower() == field), None)
-        if index is not None:
-            checkbox = checkboxes[index]
-            checked = checkbox.get_attribute("ng-reflect-model") == "true"
-            logging.info("🔍 %s checkbox is %s", field.upper(), 'ENABLED' if checked else 'DISABLED')
-        else:
-            logging.warning("⚠️ %s checkbox not found!", field.upper())
-
     time.sleep(2)
 
     # --- Set page size to 100 ---
@@ -154,7 +145,7 @@ try:
     else:
         raise FileNotFoundError(f"{EXPORTED_FILENAME} not found in {DOWNLOAD_DIR}")
 
-    # --- Download Carfax PDFs ---
+    # --- Download Carfax PDFs or rely on local upload ---
     df = pd.read_csv(final_path, on_bad_lines="skip")
     df = df.dropna(axis=1, how='all')
     df.columns = [c.strip().lower() for c in df.columns]
@@ -167,7 +158,10 @@ try:
         filename = f"{last6}_carfax.pdf"
         local_path = os.path.join(CARFAX_FOLDER, filename)
 
-        if link:
+        # Dealerpull bug workaround: "Accident History" or empty = no Carfax
+        if not link or link.lower() == "accident history":
+            logging.info("🔍 No valid Carfax link for VIN %s. Relying on local upload if available.", vin)
+        else:
             try:
                 response = requests.get(link, timeout=15)
                 if response.status_code == 200:
@@ -178,16 +172,34 @@ try:
                     logging.warning("❌ Failed to download Carfax for VIN %s, status: %d", vin, response.status_code)
             except Exception as e:
                 logging.error("⚠️ Error downloading Carfax for VIN %s: %s", vin, e)
-        else:
-            logging.info("🔍 No Carfax link for VIN %s. Will rely on local upload.", vin)
 
-    # --- Upload CSV via FTP ---
-    logging.info("⬆️ Uploading updated CSV to FTP...")
+    # --- Upload CSV and Carfax PDFs to FTP ---
+    logging.info("⬆️ Uploading updated CSV and Carfax PDFs to FTP...")
     with FTP(FTP_HOST) as ftp:
         ftp.login(FTP_USER, FTP_PASS)
+
+        # Upload CSV
         with open(final_path, 'rb') as f:
             ftp.storbinary(f"STOR {FTP_TARGET_PATH}", f)
-    logging.info("✅ Upload complete!")
+        logging.info("✅ CSV upload complete.")
+
+        # Create Carfax folder on FTP if not exists
+        try:
+            ftp.mkd(FTP_CARFAX_DIR)
+            logging.info("✅ Created Carfax folder on FTP.")
+        except Exception:
+            logging.info("ℹ️ Carfax folder already exists on FTP.")
+
+        ftp.cwd(FTP_CARFAX_DIR)
+
+        # Upload local Carfax PDFs
+        for file in os.listdir(CARFAX_FOLDER):
+            local_file = os.path.join(CARFAX_FOLDER, file)
+            with open(local_file, 'rb') as f:
+                ftp.storbinary(f"STOR {file}", f)
+                logging.info("✅ Uploaded Carfax PDF: %s", file)
+
+    logging.info("✅ All uploads complete!")
 
 finally:
     driver.quit()
