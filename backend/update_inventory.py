@@ -142,7 +142,8 @@ try:
         raise FileNotFoundError(f"{EXPORTED_FILENAME} not found in {DOWNLOAD_DIR}")
 
     # --- Download Carfax PDFs ---
-    df = pd.read_csv(final_path)
+    df = pd.read_csv(final_path, on_bad_lines="skip")
+    df = df.dropna(axis=1, how='all')  # Remove empty columns
     for idx, row in df.iterrows():
         vin = str(row['VIN'])
         link = row.get('Links', '').strip()
