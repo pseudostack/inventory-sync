@@ -79,9 +79,12 @@ try:
     dropdown_button.click()
     time.sleep(1)
 
-    # --- Check required fields ---
-    fields_to_check = ["description", "trim", "vehicle type", "drive", "transmission",
-                       "cylinders", "colour", "odometer", "List price", "salePrice", "images", "links"]
+    # --- Check required fields (include VIN!) ---
+    fields_to_check = [
+        "vin",
+        "description", "trim", "vehicle type", "drive", "transmission",
+        "cylinders", "colour", "odometer", "List price", "salePrice", "images", "links"
+    ]
     checkboxes = driver.find_elements(By.CSS_SELECTOR, "ul.dropdown-menu.show input[type='checkbox']")
     labels = driver.find_elements(By.CSS_SELECTOR, "ul.dropdown-menu.show .custom-control-label")
 
@@ -94,14 +97,15 @@ try:
                 driver.execute_script("arguments[0].click();", box)
                 print(f"✅ Enabled export field: {field_name}")
 
-    # --- Verify 'links' is enabled ---
-    links_index = next((i for i, label in enumerate(labels) if label.text.strip().lower() == 'links'), None)
-    if links_index is not None:
-        links_checkbox = checkboxes[links_index]
-        links_checked = links_checkbox.get_attribute("ng-reflect-model") == "true"
-        print(f"🔍 Links checkbox is {'ENABLED' if links_checked else 'DISABLED'} after processing.")
-    else:
-        print("⚠️ Links checkbox not found!")
+    # --- Verify 'links' and 'vin' are enabled ---
+    for field in ["links", "vin"]:
+        index = next((i for i, label in enumerate(labels) if label.text.strip().lower() == field), None)
+        if index is not None:
+            checkbox = checkboxes[index]
+            checked = checkbox.get_attribute("ng-reflect-model") == "true"
+            print(f"🔍 {field.upper()} checkbox is {'ENABLED' if checked else 'DISABLED'} after processing.")
+        else:
+            print(f"⚠️ {field.upper()} checkbox not found!")
 
     time.sleep(2)
 
@@ -144,9 +148,12 @@ try:
     # --- Download Carfax PDFs ---
     df = pd.read_csv(final_path, on_bad_lines="skip")
     df = df.dropna(axis=1, how='all')  # Remove empty columns
+    df.columns = [c.strip().lower() for c in df.columns]  # Normalize column names
+    print("✅ CSV Columns:", df.columns)
+
     for idx, row in df.iterrows():
-        vin = str(row['VIN'])
-        link = row.get('Links', '').strip()
+        vin = str(row['vin'])
+        link = row.get('links', '').strip()
         last6 = vin[-6:]
         filename = f"{last6}_carfax.pdf"
         local_path = os.path.join(CARFAX_FOLDER, filename)
