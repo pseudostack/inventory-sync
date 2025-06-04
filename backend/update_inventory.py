@@ -1,16 +1,24 @@
+import os
+import time
+import platform
+import tempfile
+import logging
+import pandas as pd
+import requests
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-import tempfile
-import os
-import time
-import platform
 from ftplib import FTP
-import pandas as pd
-import requests
+
+# --- Logging configuration ---
+logging.basicConfig(
+    level=logging.INFO,
+    format='[%(asctime)s] %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
 
 # --- Configuration ---
 system_name = platform.system()
@@ -39,7 +47,7 @@ elif system_name == "Linux":
 else:
     raise Exception(f"Unsupported OS: {system_name}")
 
-print(f"📁 Using download dir: {DOWNLOAD_DIR}")
+logging.info("📁 Using download dir: %s", DOWNLOAD_DIR)
 
 # --- Setup Chrome ---
 chrome_options = Options()
@@ -56,6 +64,7 @@ chrome_options.add_argument('--headless=new')
 chrome_options.add_argument("--disable-gpu")
 chrome_options.add_argument("--window-size=1920,1080")
 chrome_options.add_argument(f"--user-data-dir={tempfile.mkdtemp()}")
+
 driver = webdriver.Chrome(options=chrome_options)
 
 try:
@@ -63,7 +72,7 @@ try:
     driver.get(DEALERPULL_LOGIN_URL)
     WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.NAME, "username"))).send_keys(LOGIN_EMAIL)
     driver.find_element(By.NAME, "password").send_keys(LOGIN_PASS + Keys.RETURN)
-    print("Logging in...")
+    logging.info("🔐 Logging in...")
     WebDriverWait(driver, 30).until(EC.presence_of_element_located((By.CSS_SELECTOR, "div[ui-view='root']")))
     time.sleep(3)
 
@@ -79,7 +88,7 @@ try:
     dropdown_button.click()
     time.sleep(1)
 
-    # --- Check required fields (include VIN!) ---
+    # --- Check required fields (including VIN!) ---
     fields_to_check = [
         "vin",
         "description", "trim", "vehicle type", "drive", "transmission",
@@ -95,7 +104,7 @@ try:
             is_checked = box.get_attribute("ng-reflect-model") == "true"
             if not is_checked:
                 driver.execute_script("arguments[0].click();", box)
-                print(f"✅ Enabled export field: {field_name}")
+                logging.info("✅ Enabled export field: %s", field_name)
 
     # --- Verify 'links' and 'vin' are enabled ---
     for field in ["links", "vin"]:
@@ -103,9 +112,9 @@ try:
         if index is not None:
             checkbox = checkboxes[index]
             checked = checkbox.get_attribute("ng-reflect-model") == "true"
-            print(f"🔍 {field.upper()} checkbox is {'ENABLED' if checked else 'DISABLED'} after processing.")
+            logging.info("🔍 %s checkbox is %s", field.upper(), 'ENABLED' if checked else 'DISABLED')
         else:
-            print(f"⚠️ {field.upper()} checkbox not found!")
+            logging.warning("⚠️ %s checkbox not found!", field.upper())
 
     time.sleep(2)
 
@@ -131,7 +140,7 @@ try:
         EC.element_to_be_clickable((By.XPATH, "//button[contains(text(), 'Export')]"))
     )
     export_button.click()
-    print("Exporting inventory...")
+    logging.info("⬇️ Exporting inventory...")
     time.sleep(10)
 
     # --- Move and rename file ---
@@ -141,19 +150,19 @@ try:
         os.remove(final_path)
     if os.path.exists(downloaded_path):
         os.rename(downloaded_path, final_path)
-        print(f"Renamed to: {final_path}")
+        logging.info("📁 Exported file renamed to: %s", final_path)
     else:
         raise FileNotFoundError(f"{EXPORTED_FILENAME} not found in {DOWNLOAD_DIR}")
 
     # --- Download Carfax PDFs ---
     df = pd.read_csv(final_path, on_bad_lines="skip")
-    df = df.dropna(axis=1, how='all')  # Remove empty columns
-    df.columns = [c.strip().lower() for c in df.columns]  # Normalize column names
-    print("✅ CSV Columns:", df.columns)
+    df = df.dropna(axis=1, how='all')
+    df.columns = [c.strip().lower() for c in df.columns]
+    logging.info("✅ Loaded CSV columns: %s", df.columns)
 
     for idx, row in df.iterrows():
         vin = str(row['vin'])
-        link = row.get('links', '').strip()
+        link = '' if pd.isna(row.get('links')) else str(row.get('links')).strip()
         last6 = vin[-6:]
         filename = f"{last6}_carfax.pdf"
         local_path = os.path.join(CARFAX_FOLDER, filename)
@@ -164,21 +173,22 @@ try:
                 if response.status_code == 200:
                     with open(local_path, 'wb') as f:
                         f.write(response.content)
-                    print(f"✅ Downloaded Carfax for VIN {vin} -> {local_path}")
+                    logging.info("✅ Downloaded Carfax for VIN %s -> %s", vin, local_path)
                 else:
-                    print(f"❌ Failed to download for VIN {vin}, status: {response.status_code}")
+                    logging.warning("❌ Failed to download Carfax for VIN %s, status: %d", vin, response.status_code)
             except Exception as e:
-                print(f"⚠️ Error downloading for VIN {vin}: {e}")
+                logging.error("⚠️ Error downloading Carfax for VIN %s: %s", vin, e)
         else:
-            print(f"🔍 No link for VIN {vin}. Will rely on local upload.")
+            logging.info("🔍 No Carfax link for VIN %s. Will rely on local upload.", vin)
 
     # --- Upload CSV via FTP ---
-    print("Uploading to FTP...")
+    logging.info("⬆️ Uploading updated CSV to FTP...")
     with FTP(FTP_HOST) as ftp:
         ftp.login(FTP_USER, FTP_PASS)
         with open(final_path, 'rb') as f:
             ftp.storbinary(f"STOR {FTP_TARGET_PATH}", f)
-    print("✅ Upload complete.")
+    logging.info("✅ Upload complete!")
 
 finally:
     driver.quit()
+    logging.info("🛑 Selenium session closed.")
