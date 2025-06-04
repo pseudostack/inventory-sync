@@ -22,7 +22,6 @@ logging.basicConfig(
 
 # --- Configuration ---
 system_name = platform.system()
-
 DEALERPULL_LOGIN_URL = "https://app.dealerpull.com/login"
 INVENTORY_PAGE_URL = "https://app.dealerpull.com/inventory-list"
 EXPORTED_FILENAME = "inventory_export.csv"
@@ -89,7 +88,7 @@ try:
     dropdown_button.click()
     time.sleep(1)
 
-    # --- Check required fields (including VIN!) ---
+    # --- Check required fields (including VIN and links!) ---
     fields_to_check = [
         "vin",
         "description", "trim", "vehicle type", "drive", "transmission",
@@ -136,7 +135,7 @@ try:
 
     # --- Move and rename file ---
     downloaded_path = os.path.join(DOWNLOAD_DIR, EXPORTED_FILENAME)
-    final_path = os.path.join(DOWNLOAD_DIR, FINAL_FILENAME)
+    final_path = os.path.join("static", FINAL_FILENAME)
     if os.path.exists(final_path):
         os.remove(final_path)
     if os.path.exists(downloaded_path):
@@ -158,9 +157,8 @@ try:
         filename = f"{last6}_carfax.pdf"
         local_path = os.path.join(CARFAX_FOLDER, filename)
 
-        # Dealerpull bug workaround: "Accident History" or empty = no Carfax
         if not link or link.lower() == "accident history":
-            logging.info("🔍 No valid Carfax link for VIN %s. Relying on local upload if available.", vin)
+            logging.info("🔍 No valid Carfax link for VIN %s. Will rely on local upload.", vin)
         else:
             try:
                 response = requests.get(link, timeout=15)

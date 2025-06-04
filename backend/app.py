@@ -6,6 +6,7 @@ import datetime
 import subprocess
 import pandas as pd
 import socket
+from ftplib import FTP
 
 app = Flask(__name__)
 app.secret_key = 'super-secret-key'  # TODO: Use environment variable in production
@@ -16,13 +17,15 @@ USERNAME = 'admin'
 PASSWORD = 'B2010luetooth5!'
 UPLOAD_FOLDER = 'static'
 CARFAX_FOLDER = os.path.join(UPLOAD_FOLDER, 'carfax')
-INVENTORY_FILE = 'inventory.csv'
+INVENTORY_FILE = os.path.join(UPLOAD_FOLDER, 'inventory.csv')
 LOG_FILE = 'update_log.txt'
-ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'svg'}
+FTP_HOST = "ftp.eddysauto.ca"
+FTP_USER = "berlinautosales.ca@berlinautosales.ca"
+FTP_PASS = "B2010luetooth5!"
+ALLOWED_EXTENSIONS = {'pdf'}
 os.makedirs(CARFAX_FOLDER, exist_ok=True)
 
 def get_server_ip():
-    """Returns the IP address of the server."""
     return socket.gethostbyname(socket.gethostname())
 
 def allowed_file(filename, allowed_ext=ALLOWED_EXTENSIONS):
@@ -32,7 +35,7 @@ def allowed_file(filename, allowed_ext=ALLOWED_EXTENSIONS):
 def home():
     return redirect('/admin')
 
-# --- Login and Admin Panel ---
+# --- Login & Admin Panel ---
 LOGIN_HTML = '''
 <!doctype html>
 <title>Admin Login</title>
@@ -66,8 +69,6 @@ def admin_panel():
         .status, .log, form { margin-top: 1.5rem; }
         .log { white-space: pre-wrap; background: #1e1e1e; padding: 1rem; border-radius: 8px; }
         .btn, button { padding: 10px 20px; background: orange; border: none; color: black; font-weight: bold; cursor: pointer; }
-        label { display: block; margin-top: 1rem; }
-        select, input[type="file"] { margin-top: 0.5rem; }
       </style>
     </head>
     <body>
@@ -79,35 +80,6 @@ def admin_panel():
       <div class="log" id="log" style="display: none;"></div>
 
       <hr>
-
-      <form action="/upload-logo" method="POST" enctype="multipart/form-data">
-        <label>Upload Logo</label>
-        <input type="file" name="file" required>
-        <label>Logo Size</label>
-        <select name="size">
-          <option>100%</option>
-          <option>90%</option>
-          <option>80%</option>
-          <option>70%</option>
-          <option>60%</option>
-        </select><br><br>
-        <button type="submit">Upload Logo</button>
-      </form>
-
-      <form action="/upload-background" method="POST" enctype="multipart/form-data">
-        <label>Upload Background</label>
-        <input type="file" name="file" required><br><br>
-        <button type="submit">Upload Background</button>
-      </form>
-
-      <form action="/upload-coming-soon" method="POST" enctype="multipart/form-data">
-        <label>Upload Coming Soon Image</label>
-        <input type="file" name="file" required><br><br>
-        <button type="submit">Upload Image</button>
-      </form>
-
-      <hr>
-
       <a href="/admin-carfax" class="btn">Manage Carfax Links</a>
       <a href="/logout" class="btn">Logout</a>
 
@@ -115,7 +87,7 @@ def admin_panel():
         async function triggerUpdate() {
           const status = document.getElementById('status');
           const log = document.getElementById('log');
-          status.innerText = 'Status: Uploading...';
+          status.innerText = 'Status: Updating...';
           log.style.display = 'none';
 
           try {
@@ -130,7 +102,7 @@ def admin_panel():
             log.style.display = 'block';
           }
 
-          setTimeout(() => { status.innerText = 'Status: Ready'; }, 5000);
+          setTimeout(() => { status.innerText = 'Status: Ready'; }, 10000);
         }
       </script>
     </body>
@@ -151,13 +123,13 @@ def logout():
     session.pop('logged_in', None)
     return redirect('/admin')
 
-# --- Trigger Inventory Update ---
 @app.route('/trigger-update', methods=['POST'])
 def trigger_update():
     try:
         result = subprocess.run(
             ["python3", "/root/inventory-sync/backend/update_inventory.py"],
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
             text=True,
             check=True
         )
@@ -170,60 +142,41 @@ def trigger_update():
     except subprocess.CalledProcessError as e:
         return jsonify({
             "status": "Failed",
-            "error": e.stderr
+            "error": e.stdout
         }), 500
 
-# --- Upload Images ---
-def handle_file_upload(request_file, name):
-    if request_file and allowed_file(request_file.filename):
-        filename = secure_filename(name)
-        path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-        request_file.save(path)
-        return True
-    return False
-
-@app.route('/upload-logo', methods=['POST'])
-def upload_logo():
-    if 'logged_in' not in session:
-        return 'Unauthorized', 403
-
-    file = request.files.get('file')
-    size = request.form.get('size', '100%')
-    if handle_file_upload(file, 'logo.svg'):
-        return redirect('/admin')
-    return 'Failed to upload logo', 400
-
-@app.route('/upload-background', methods=['POST'])
-def upload_background():
-    if 'logged_in' not in session:
-        return 'Unauthorized', 403
-
-    file = request.files.get('file')
-    if handle_file_upload(file, 'background.jpg'):
-        return redirect('/admin')
-    return 'Failed to upload background', 400
-
-@app.route('/upload-coming-soon', methods=['POST'])
-def upload_coming_soon():
-    if 'logged_in' not in session:
-        return 'Unauthorized', 403
-
-    file = request.files.get('file')
-    if handle_file_upload(file, 'coming-soon.png'):
-        return redirect('/admin')
-    return 'Failed to upload image', 400
-
-# --- Carfax Management ---
 @app.route('/admin-carfax')
 def admin_carfax():
     if 'logged_in' not in session:
         return redirect('/admin')
 
-    if os.path.exists(INVENTORY_FILE):
-        df = pd.read_csv(INVENTORY_FILE)
-        cars = df.to_dict(orient='records')
-    else:
-        cars = []
+    if not os.path.exists(INVENTORY_FILE):
+        return "⚠️ Inventory file not found. Please run 'Update Website Inventory' first."
+
+    # Load cars from CSV
+    df = pd.read_csv(INVENTORY_FILE, on_bad_lines='skip')
+    df.columns = [c.strip().lower() for c in df.columns]
+    cars = df.to_dict(orient='records')
+
+    # Check FTP for Carfax PDFs
+    carfax_files = set()
+    with FTP(FTP_HOST) as ftp:
+        ftp.login(FTP_USER, FTP_PASS)
+        try:
+            ftp.cwd('carfax')
+            carfax_files = set(ftp.nlst())
+        except Exception:
+            pass
+
+    # Add Carfax link status
+    for car in cars:
+        vin = str(car['vin'])
+        last6 = vin[-6:]
+        filename = f"{last6}_carfax.pdf"
+        if filename in carfax_files:
+            car['carfax_url'] = f"http://{FTP_HOST}/carfax/{filename}"
+        else:
+            car['carfax_url'] = None
 
     return render_template_string("""
     <!DOCTYPE html>
@@ -235,28 +188,27 @@ def admin_carfax():
         table { border-collapse: collapse; width: 100%; }
         th, td { border: 1px solid #555; padding: 8px; text-align: left; }
         th { background-color: #333; }
-        form { display: inline-block; }
         .btn { background: orange; color: black; padding: 5px 10px; border: none; cursor: pointer; }
       </style>
     </head>
     <body>
       <h1>Carfax Links</h1>
       <table>
-        <tr><th>VIN</th><th>Links</th><th>Upload</th></tr>
+        <tr><th>VIN</th><th>Carfax PDF</th><th>Upload</th></tr>
         {% for car in cars %}
         <tr>
-          <td>{{ car['VIN'] }}</td>
+          <td>{{ car['vin'] }}</td>
           <td>
-            {% if car['Links'] and car['Links']|length > 0 %}
-              <a href="{{ car['Links'] }}" target="_blank">View Carfax</a>
+            {% if car['carfax_url'] %}
+              <a href="{{ car['carfax_url'] }}" target="_blank">View Carfax</a>
             {% else %}
-              No Carfax URL
+              No Carfax
             {% endif %}
           </td>
           <td>
-            {% if not car['Links'] or car['Links']|length == 0 %}
+            {% if not car['carfax_url'] %}
             <form method="POST" action="/upload-carfax" enctype="multipart/form-data">
-              <input type="hidden" name="vin" value="{{ car['VIN'] }}">
+              <input type="hidden" name="vin" value="{{ car['vin'] }}">
               <input type="file" name="file" accept=".pdf" required>
               <button class="btn" type="submit">Upload Carfax</button>
             </form>
@@ -279,21 +231,11 @@ def upload_carfax():
     vin = request.form.get('vin')
     file = request.files.get('file')
 
-    if vin and file and allowed_file(file.filename, allowed_ext={'pdf'}):
-        last4 = vin[-4:]
-        filename = f"{last4}_carfax.pdf"
+    if vin and file and allowed_file(file.filename):
+        last6 = vin[-6:]
+        filename = f"{last6}_carfax.pdf"
         path = os.path.join(CARFAX_FOLDER, filename)
         file.save(path)
-
-        # Update CSV
-        if os.path.exists(INVENTORY_FILE):
-            df = pd.read_csv(INVENTORY_FILE)
-            server_ip = get_server_ip()
-            carfax_url = f"http://{server_ip}:5000/static/carfax/{filename}"
-            df.loc[df['VIN'] == vin, 'Links'] = carfax_url
-            df.to_csv(INVENTORY_FILE, index=False)
-            print(f"✅ Updated CSV for VIN {vin} with Carfax URL: {carfax_url}")
-
         return redirect('/admin-carfax')
 
     return 'Invalid upload', 400
