@@ -6,6 +6,7 @@ import datetime
 import subprocess
 import pandas as pd
 import socket
+import logging
 from ftplib import FTP
 
 app = Flask(__name__)
@@ -22,8 +23,12 @@ LOG_FILE = 'update_log.txt'
 FTP_HOST = "ftp.eddysauto.ca"
 FTP_USER = "berlinautosales.ca@berlinautosales.ca"
 FTP_PASS = "B2010luetooth5!"
+FTP_CARFAX_DIR = "carfax"
+FTP_TARGET_PATH = "inventory.csv"
 ALLOWED_EXTENSIONS = {'pdf'}
 os.makedirs(CARFAX_FOLDER, exist_ok=True)
+
+logging.basicConfig(level=logging.INFO)
 
 def get_server_ip():
     return socket.gethostbyname(socket.gethostname())
@@ -150,33 +155,22 @@ def admin_carfax():
     if 'logged_in' not in session:
         return redirect('/admin')
 
-    if not os.path.exists(INVENTORY_FILE):
-        return "⚠️ Inventory file not found. Please run 'Update Website Inventory' first."
+    # Always pull latest inventory.csv from FTP
+    with FTP(FTP_HOST) as ftp:
+        ftp.login(FTP_USER, FTP_PASS)
+        with open(INVENTORY_FILE, 'wb') as f:
+            ftp.retrbinary(f"RETR {FTP_TARGET_PATH}", f.write)
 
-    # Load cars from CSV
     df = pd.read_csv(INVENTORY_FILE, on_bad_lines='skip')
     df.columns = [c.strip().lower() for c in df.columns]
     cars = df.to_dict(orient='records')
 
-    # Check FTP for Carfax PDFs
-    carfax_files = set()
-    with FTP(FTP_HOST) as ftp:
-        ftp.login(FTP_USER, FTP_PASS)
-        try:
-            ftp.cwd('carfax')
-            carfax_files = set(ftp.nlst())
-        except Exception:
-            pass
-
-    # Add Carfax link status
+    # Build Carfax URLs
     for car in cars:
         vin = str(car['vin'])
         last6 = vin[-6:]
         filename = f"{last6}_carfax.pdf"
-        if filename in carfax_files:
-            car['carfax_url'] = f"http://{FTP_HOST}/carfax/{filename}"
-        else:
-            car['carfax_url'] = None
+        car['carfax_url'] = f"https://berlinautosales.ca/carfax/{filename}"
 
     return render_template_string("""
     <!DOCTYPE html>
@@ -199,20 +193,14 @@ def admin_carfax():
         <tr>
           <td>{{ car['vin'] }}</td>
           <td>
-            {% if car['carfax_url'] %}
-              <a href="{{ car['carfax_url'] }}" target="_blank">View Carfax</a>
-            {% else %}
-              No Carfax
-            {% endif %}
+            <a href="{{ car['carfax_url'] }}" target="_blank">View Carfax</a>
           </td>
           <td>
-            {% if not car['carfax_url'] %}
             <form method="POST" action="/upload-carfax" enctype="multipart/form-data">
               <input type="hidden" name="vin" value="{{ car['vin'] }}">
               <input type="file" name="file" accept=".pdf" required>
               <button class="btn" type="submit">Upload Carfax</button>
             </form>
-            {% endif %}
           </td>
         </tr>
         {% endfor %}
@@ -234,8 +222,34 @@ def upload_carfax():
     if vin and file and allowed_file(file.filename):
         last6 = vin[-6:]
         filename = f"{last6}_carfax.pdf"
-        path = os.path.join(CARFAX_FOLDER, filename)
-        file.save(path)
+        local_path = os.path.join(CARFAX_FOLDER, filename)
+        file.save(local_path)
+
+        # Upload PDF to FTP immediately
+        with FTP(FTP_HOST) as ftp:
+            ftp.login(FTP_USER, FTP_PASS)
+            try:
+                ftp.cwd(FTP_CARFAX_DIR)
+            except Exception:
+                ftp.mkd(FTP_CARFAX_DIR)
+                ftp.cwd(FTP_CARFAX_DIR)
+            with open(local_path, 'rb') as f:
+                ftp.storbinary(f"STOR {filename}", f)
+
+        # Update CSV immediately
+        if os.path.exists(INVENTORY_FILE):
+            df = pd.read_csv(INVENTORY_FILE, on_bad_lines='skip')
+            df.columns = [c.strip().lower() for c in df.columns]
+            carfax_url = f"https://berlinautosales.ca/carfax/{filename}"
+            df.loc[df['vin'] == vin, 'links'] = carfax_url
+            df.to_csv(INVENTORY_FILE, index=False)
+
+            # Upload updated CSV to FTP
+            with FTP(FTP_HOST) as ftp:
+                ftp.login(FTP_USER, FTP_PASS)
+                with open(INVENTORY_FILE, 'rb') as f:
+                    ftp.storbinary(f"STOR {FTP_TARGET_PATH}", f)
+
         return redirect('/admin-carfax')
 
     return 'Invalid upload', 400
