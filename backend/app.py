@@ -155,22 +155,34 @@ def admin_carfax():
     if 'logged_in' not in session:
         return redirect('/admin')
 
-    # Always pull latest inventory.csv from FTP
+    # --- Always pull latest inventory.csv from FTP ---
     with FTP(FTP_HOST) as ftp:
         ftp.login(FTP_USER, FTP_PASS)
         with open(INVENTORY_FILE, 'wb') as f:
             ftp.retrbinary(f"RETR {FTP_TARGET_PATH}", f.write)
 
+        # Get real Carfax files on FTP
+        carfax_files = set()
+        try:
+            ftp.cwd(FTP_CARFAX_DIR)
+            carfax_files = set(ftp.nlst())
+        except Exception:
+            pass
+
+    # --- Load inventory ---
     df = pd.read_csv(INVENTORY_FILE, on_bad_lines='skip')
     df.columns = [c.strip().lower() for c in df.columns]
     cars = df.to_dict(orient='records')
 
-    # Build Carfax URLs
+    # --- Add carfax_url only if PDF exists on FTP ---
     for car in cars:
         vin = str(car['vin'])
         last6 = vin[-6:]
         filename = f"{last6}_carfax.pdf"
-        car['carfax_url'] = f"https://berlinautosales.ca/carfax/{filename}"
+        if filename in carfax_files:
+            car['carfax_url'] = f"https://berlinautosales.ca/carfax/{filename}"
+        else:
+            car['carfax_url'] = None
 
     return render_template_string("""
     <!DOCTYPE html>
@@ -193,7 +205,11 @@ def admin_carfax():
         <tr>
           <td>{{ car['vin'] }}</td>
           <td>
-            <a href="{{ car['carfax_url'] }}" target="_blank">View Carfax</a>
+            {% if car['carfax_url'] %}
+              <a href="{{ car['carfax_url'] }}" target="_blank">View Carfax</a>
+            {% else %}
+              No Carfax
+            {% endif %}
           </td>
           <td>
             <form method="POST" action="/upload-carfax" enctype="multipart/form-data">
