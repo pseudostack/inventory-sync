@@ -26,6 +26,7 @@ DEALERPULL_LOGIN_URL = "https://app.dealerpull.com/login"
 INVENTORY_PAGE_URL = "https://app.dealerpull.com/inventory-list"
 EXPORTED_FILENAME = "inventory_export.csv"
 FINAL_FILENAME = "inventory.csv"
+CARFAX_LIST_FILENAME = "available_carfax.csv"
 
 FTP_HOST = "ftp.eddysauto.ca"
 FTP_USER = "berlinautosales.ca@berlinautosales.ca"
@@ -36,7 +37,7 @@ FTP_CARFAX_DIR = "carfax"
 LOGIN_EMAIL = "farhad@berlinautosales.ca"
 LOGIN_PASS = "B2010luetooth5!"
 
-CARFAX_FOLDER = "static/carfax"
+CARFAX_FOLDER = "carfax"
 os.makedirs(CARFAX_FOLDER, exist_ok=True)
 
 if system_name == "Darwin":
@@ -47,7 +48,7 @@ elif system_name == "Linux":
 else:
     raise Exception(f"Unsupported OS: {system_name}")
 
-logging.info("📁 Using download dir: %s", DOWNLOAD_DIR)
+logging.info("\U0001F4C1 Using download dir: %s", DOWNLOAD_DIR)
 
 # --- Setup Chrome ---
 chrome_options = Options()
@@ -68,27 +69,23 @@ chrome_options.add_argument(f"--user-data-dir={tempfile.mkdtemp()}")
 driver = webdriver.Chrome(options=chrome_options)
 
 try:
-    # --- Login ---
     driver.get(DEALERPULL_LOGIN_URL)
     WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.NAME, "username"))).send_keys(LOGIN_EMAIL)
     driver.find_element(By.NAME, "password").send_keys(LOGIN_PASS + Keys.RETURN)
-    logging.info("🔐 Logging in...")
+    logging.info("\U0001F512 Logging in...")
     WebDriverWait(driver, 30).until(EC.presence_of_element_located((By.CSS_SELECTOR, "div[ui-view='root']")))
     time.sleep(3)
 
-    # --- Go to inventory ---
     driver.get(INVENTORY_PAGE_URL)
     WebDriverWait(driver, 20).until(EC.presence_of_element_located((By.ID, "select-all")))
     time.sleep(1)
 
-    # --- Open field selector dropdown ---
     dropdown_button = WebDriverWait(driver, 15).until(
         EC.element_to_be_clickable((By.CSS_SELECTOR, "button#colDropdown"))
     )
     dropdown_button.click()
     time.sleep(1)
 
-    # --- Check required fields (including VIN and links!) ---
     fields_to_check = [
         "vin",
         "description", "trim", "vehicle type", "drive", "transmission",
@@ -108,14 +105,12 @@ try:
 
     time.sleep(2)
 
-    # --- Set page size to 100 ---
     page_size_dropdown = WebDriverWait(driver, 15).until(
         EC.element_to_be_clickable((By.CSS_SELECTOR, "select[data-cy='page-count']"))
     )
     driver.execute_script("arguments[0].value = '100'; arguments[0].dispatchEvent(new Event('change'));", page_size_dropdown)
     time.sleep(3)
 
-    # --- Select all vehicles ---
     select_all = driver.find_element(By.ID, "select-all")
     driver.execute_script("""
         arguments[0].checked = true;
@@ -125,7 +120,6 @@ try:
     """, select_all)
     time.sleep(2)
 
-    # --- Export inventory ---
     export_button = WebDriverWait(driver, 15).until(
         EC.element_to_be_clickable((By.XPATH, "//button[contains(text(), 'Export')]"))
     )
@@ -133,7 +127,6 @@ try:
     logging.info("⬇️ Exporting inventory...")
     time.sleep(10)
 
-    # --- Move and rename file ---
     downloaded_path = os.path.join(DOWNLOAD_DIR, EXPORTED_FILENAME)
     final_path = os.path.join("static", FINAL_FILENAME)
     if os.path.exists(final_path):
@@ -144,11 +137,12 @@ try:
     else:
         raise FileNotFoundError(f"{EXPORTED_FILENAME} not found in {DOWNLOAD_DIR}")
 
-    # --- Download Carfax PDFs or rely on local upload ---
     df = pd.read_csv(final_path, on_bad_lines="skip")
     df = df.dropna(axis=1, how='all')
     df.columns = [c.strip().lower() for c in df.columns]
     logging.info("✅ Loaded CSV columns: %s", df.columns)
+
+    available_carfax_rows = []
 
     for idx, row in df.iterrows():
         vin = str(row['vin'])
@@ -171,17 +165,25 @@ try:
             except Exception as e:
                 logging.error("⚠️ Error downloading Carfax for VIN %s: %s", vin, e)
 
-    # --- Upload CSV and Carfax PDFs to FTP ---
+        if os.path.exists(local_path):
+            available_carfax_rows.append({
+                "vin": vin,
+                "description": row.get("description", "").strip(),
+                "carfax_url": f"https://berlinautosales.ca/carfax/{filename}"
+            })
+
+    available_carfax_path = os.path.join("static", CARFAX_LIST_FILENAME)
+    pd.DataFrame(available_carfax_rows).to_csv(available_carfax_path, index=False)
+    logging.info("✅ Created available_carfax.csv with %d entries", len(available_carfax_rows))
+
     logging.info("⬆️ Uploading updated CSV and Carfax PDFs to FTP...")
     with FTP(FTP_HOST) as ftp:
         ftp.login(FTP_USER, FTP_PASS)
 
-        # Upload CSV
         with open(final_path, 'rb') as f:
             ftp.storbinary(f"STOR {FTP_TARGET_PATH}", f)
         logging.info("✅ CSV upload complete.")
 
-        # Create Carfax folder on FTP if not exists
         try:
             ftp.mkd(FTP_CARFAX_DIR)
             logging.info("✅ Created Carfax folder on FTP.")
@@ -190,12 +192,17 @@ try:
 
         ftp.cwd(FTP_CARFAX_DIR)
 
-        # Upload local Carfax PDFs
         for file in os.listdir(CARFAX_FOLDER):
             local_file = os.path.join(CARFAX_FOLDER, file)
             with open(local_file, 'rb') as f:
                 ftp.storbinary(f"STOR {file}", f)
                 logging.info("✅ Uploaded Carfax PDF: %s", file)
+
+        # Upload available_carfax.csv
+        with open(available_carfax_path, 'rb') as f:
+            ftp.cwd("..")  # go back to base FTP directory
+            ftp.storbinary(f"STOR {CARFAX_LIST_FILENAME}", f)
+            logging.info("✅ Uploaded available_carfax.csv to FTP.")
 
     logging.info("✅ All uploads complete!")
 
