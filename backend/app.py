@@ -233,7 +233,11 @@ def admin_carfax():
 
     if os.path.exists(INVENTORY_FILE):
         print ("os path exists inventory.csv!")
-        df = pd.read_csv(INVENTORY_FILE)
+        df = pd.read_csv(
+            INVENTORY_FILE,
+            engine="python",
+            on_bad_lines="skip"
+        )
         cars = df.to_dict(orient='records')
     else:
         cars = []
@@ -300,7 +304,11 @@ def upload_carfax():
 
         # Update CSV
         if os.path.exists(INVENTORY_FILE):
-            df = pd.read_csv(INVENTORY_FILE)
+            df = pd.read_csv(
+                INVENTORY_FILE,
+                engine="python",
+                on_bad_lines="skip"
+            )
             server_ip = get_server_ip()
             carfax_url = f"http://{server_ip}:5000/static/carfax/{filename}"
             df.loc[df['VIN'] == vin, 'Links'] = carfax_url
