@@ -262,7 +262,7 @@ def admin_carfax():
         <tr><th>VIN</th><th>Links</th><th>Upload</th></tr>
         {% for car in cars %}
         <tr>
-          <td>{{ car['VIN'] }}</td>
+          <td>{{ car['vin'] }}</td>
           <td>
             {% if car['Links'] and car['Links']|length > 0 %}
               <a href="{{ car['Links'] }}" target="_blank">View Carfax</a>
@@ -273,7 +273,7 @@ def admin_carfax():
           <td>
             {% if not car['Links'] or car['Links']|length == 0 %}
             <form method="POST" action="/upload-carfax" enctype="multipart/form-data">
-              <input type="hidden" name="vin" value="{{ car['VIN'] }}">
+              <input type="hidden" name="vin" value="{{ car['vin'] }}">
               <input type="file" name="file" accept=".pdf" required>
               <button class="btn" type="submit">Upload Carfax</button>
             </form>
@@ -311,7 +311,7 @@ def upload_carfax():
             )
             server_ip = get_server_ip()
             carfax_url = f"http://{server_ip}:5000/static/carfax/{filename}"
-            df.loc[df['VIN'] == vin, 'Links'] = carfax_url
+            df.loc[df['vin'] == vin, 'Links'] = carfax_url
             df.to_csv(INVENTORY_FILE, index=False)
             print(f"✅ Updated CSV for VIN {vin} with Carfax URL: {carfax_url}")
 
