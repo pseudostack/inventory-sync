@@ -89,7 +89,7 @@ try:
 
     # Step 4: Ensure required fields are checked
     fields_to_check = [
-        "description", "trim", "vehicle type", "drive", "transmission",
+        "vin", "description", "trim", "vehicle type", "drive", "transmission",
         "cylinders", "colour", "odometer", "List price", "salePrice", "images"
     ]
 
