@@ -109,27 +109,27 @@ try:
     
     print("Changing page size to 100...")
 
-wait = WebDriverWait(driver, 20)
+    wait = WebDriverWait(driver, 20)
 
-def set_mat_select_by_text(data_cy: str, text: str):
-    # open the mat-select
-    trigger = wait.until(EC.element_to_be_clickable((
-        By.CSS_SELECTOR, f"mat-select[data-cy='{data_cy}'] .mat-select-trigger"
-    )))
-    driver.execute_script("arguments[0].click();", trigger)
+    def set_mat_select_by_text(data_cy: str, text: str):
+        # open the mat-select
+        trigger = wait.until(EC.element_to_be_clickable((
+            By.CSS_SELECTOR, f"mat-select[data-cy='{data_cy}'] .mat-select-trigger"
+        )))
+        driver.execute_script("arguments[0].click();", trigger)
 
-    # pick the option from the overlay
-    option = wait.until(EC.element_to_be_clickable((
-        By.XPATH, f"//mat-option//span[normalize-space()='{text}']"
-    )))
-    driver.execute_script("arguments[0].click();", option)
+        # pick the option from the overlay
+        option = wait.until(EC.element_to_be_clickable((
+            By.XPATH, f"//mat-option//span[normalize-space()='{text}']"
+        )))
+        driver.execute_script("arguments[0].click();", option)
 
-    # confirm the selection shows in the trigger
-    wait.until(lambda d: text in d.find_element(
-        By.CSS_SELECTOR, f"mat-select[data-cy='{data_cy}']"
-    ).text)
+        # confirm the selection shows in the trigger
+        wait.until(lambda d: text in d.find_element(
+            By.CSS_SELECTOR, f"mat-select[data-cy='{data_cy}']"
+        ).text)
 
-set_mat_select_by_text("page-count", "100")
+    set_mat_select_by_text("page-count", "100")
 
     # Wait for the page to refresh with 100 cars
     time.sleep(3)
