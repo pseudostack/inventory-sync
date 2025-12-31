@@ -15,10 +15,7 @@ CORS(app)
 USERNAME = 'admin'
 PASSWORD = 'B2010luetooth5!'
 
-def get_server_ip():
-
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-
 UPLOAD_FOLDER = os.path.join(BASE_DIR, "static")
 CARFAX_FOLDER = os.path.join(UPLOAD_FOLDER, "carfax")
 INVENTORY_FILE = os.path.join(BASE_DIR, "inventory.csv")
