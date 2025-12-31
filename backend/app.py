@@ -14,12 +14,21 @@ CORS(app)
 # Constants
 USERNAME = 'admin'
 PASSWORD = 'B2010luetooth5!'
-UPLOAD_FOLDER = 'static'
-CARFAX_FOLDER = os.path.join(UPLOAD_FOLDER, 'carfax')
-INVENTORY_FILE = 'inventory.csv'
-LOG_FILE = 'update_log.txt'
+
+def get_server_ip():
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+UPLOAD_FOLDER = os.path.join(BASE_DIR, "static")
+CARFAX_FOLDER = os.path.join(UPLOAD_FOLDER, "carfax")
+INVENTORY_FILE = os.path.join(BASE_DIR, "inventory.csv")
+LOG_FILE = os.path.join(BASE_DIR, "update_log.txt")
+app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
+os.makedirs(CARFAX_FOLDER, exist_ok=True)
+
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'svg'}
 os.makedirs(CARFAX_FOLDER, exist_ok=True)
+
 
 def get_server_ip():
     """Returns the IP address of the server."""
@@ -151,6 +160,9 @@ def logout():
     session.pop('logged_in', None)
     return redirect('/admin')
 
+import shutil  # put this near your other imports at the top
+
+
 # --- Trigger Inventory Update ---
 @app.route('/trigger-update', methods=['POST'])
 def trigger_update():
@@ -161,6 +173,9 @@ def trigger_update():
             text=True,
             check=True
         )
+
+        shutil.copy("/root/inventory-sync/downloads/inventory.csv", INVENTORY_FILE)
+
         with open(LOG_FILE, 'a') as f:
             f.write(f"{datetime.datetime.now()} - Inventory updated\n")
         return jsonify({
