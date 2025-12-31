@@ -220,6 +220,7 @@ def admin_carfax():
         return redirect('/admin')
 
     if os.path.exists(INVENTORY_FILE):
+        print ("os path exists inventory.csv!")
         df = pd.read_csv(INVENTORY_FILE)
         cars = df.to_dict(orient='records')
     else:
