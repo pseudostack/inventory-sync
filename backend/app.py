@@ -309,9 +309,17 @@ def upload_carfax():
                 engine="python",
                 on_bad_lines="skip"
             )
-            server_ip = get_server_ip()
-            carfax_url = f"http://{server_ip}:5000/static/carfax/{filename}"
-            df.loc[df['vin'] == vin, 'Links'] = carfax_url
+
+            # Normalize VIN column name to "VIN"
+            if "VIN" not in df.columns and "vin" in df.columns:
+              df = df.rename(columns={"vin": "VIN"})
+
+            # Ensure Links column exists
+            if "Links" not in df.columns:
+                df["Links"] = ""
+            
+            carfax_url = f"/static/carfax/{filename}"
+            df.loc[df["VIN"] == vin, "Links"] = carfax_url
             df.to_csv(INVENTORY_FILE, index=False)
             print(f"✅ Updated CSV for VIN {vin} with Carfax URL: {carfax_url}")
 
