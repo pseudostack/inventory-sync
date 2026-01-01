@@ -1,0 +1,27 @@
+# Secrets
+.env
+*.env
+
+# Python
+__pycache__/
+*.pyc
+
+# Virtual env
+venv/
+myenv/
+
+# Runtime outputs
+inventory.csv
+inventory_export.csv
+*.log
+update_log.txt
+server.log
+
+# Downloads folder
+downloads/
+../downloads/
+
+# Generated PDFs
+static/carfax/
+static/carfax/*.pdf
+static/
