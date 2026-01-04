@@ -58,27 +58,61 @@ def newest_file(pattern: str):
     return max(files, key=os.path.getmtime) if files else None
 
 def wait_for_new_pdf(download_dir: str, timeout: int = 60):
-    """
-    Waits for a new PDF to appear in download_dir and finish downloading.
-    """
-    start = time.time()
-    before = set(glob.glob(os.path.join(download_dir, "*.pdf")))
+    start_ts = time.time()
 
-    while time.time() - start < timeout:
-        # Chrome uses .crdownload while downloading
+    while time.time() - start_ts < timeout:
+        # still downloading?
         if glob.glob(os.path.join(download_dir, "*.crdownload")):
-            time.sleep(0.5)
+            time.sleep(0.3)
             continue
 
-        after = set(glob.glob(os.path.join(download_dir, "*.pdf")))
-        new_files = list(after - before)
-        if new_files:
-            # return newest of the newly created
-            return max(new_files, key=os.path.getmtime)
+        pdfs = glob.glob(os.path.join(download_dir, "*.pdf"))
+        if pdfs:
+            newest = max(pdfs, key=os.path.getmtime)
+            if os.path.getmtime(newest) >= start_ts - 1:
+                return newest
 
-        time.sleep(0.5)
+        time.sleep(0.3)
 
     return None
+
+def click_condition_report_and_switch(driver, timeout=40):
+    old_handles = set(driver.window_handles)
+    old_url = driver.current_url
+
+    el = deep_find_by_exact_text(driver, "Condition report", timeout=timeout)
+    js_real_click(driver, el)
+
+    # wait until either: new tab appears OR url changes OR carfax link appears
+    def progressed(d):
+        if len(d.window_handles) > len(old_handles):
+            return True
+        if d.current_url != old_url:
+            return True
+        hit = d.execute_script(r"""
+          const roots=[document];
+          while(roots.length){
+            const r=roots.shift();
+            const as=r.querySelectorAll? r.querySelectorAll("a[href]"):[];
+            for(const a of as){
+              const h=a.href||a.getAttribute("href");
+              if(h && /vhr\.carfax\.ca/i.test(h)) return true;
+            }
+            const els=r.querySelectorAll? r.querySelectorAll("*"):[];
+            for(const el of els) if(el.shadowRoot) roots.push(el.shadowRoot);
+          }
+          return false;
+        """)
+        return bool(hit)
+
+    WebDriverWait(driver, timeout).until(progressed)
+
+    # switch if a new tab opened
+    new_handles = [h for h in driver.window_handles if h not in old_handles]
+    if new_handles:
+        driver.switch_to.window(new_handles[0])
+
+    return True
 
 def safe_switch_to_new_tab(driver, old_handles, timeout=10):
     start = time.time()
@@ -210,27 +244,6 @@ def wait_deep(driver, timeout, js_returning_element, *args):
     wait = WebDriverWait(driver, timeout)
     return wait.until(lambda d: d.execute_script(js_returning_element, *args))
 
-def js_real_click(driver, el):
-    """Your proven click chain (pointer + mouse)."""
-    driver.execute_script("""
-        const el = arguments[0];
-        if (!el) return false;
-
-        el.scrollIntoView({ block: "center", inline: "center" });
-        el.focus();
-
-        const opts = { bubbles: true, cancelable: true, view: window };
-
-        try {
-          el.dispatchEvent(new PointerEvent("pointerdown", { ...opts, pointerId: 1, pointerType: "mouse", isPrimary: true }));
-          el.dispatchEvent(new PointerEvent("pointerup",   { ...opts, pointerId: 1, pointerType: "mouse", isPrimary: true }));
-        } catch (e) {}
-
-        el.dispatchEvent(new MouseEvent("mousedown", opts));
-        el.dispatchEvent(new MouseEvent("mouseup", opts));
-        el.dispatchEvent(new MouseEvent("click", opts));
-        return true;
-    """, el)
 
 def click_history_card_by_vin(driver, vin, timeout=40):
     vin = (vin or "").strip().upper()
@@ -258,97 +271,143 @@ def click_history_card_by_vin(driver, vin, timeout=40):
     js_real_click(driver, card)
     return True   
 
-def click_condition_report(driver, timeout=40):
-    old_handles = set(driver.window_handles)
 
-    btn = wait_deep(driver, timeout, """
-        const roots = [document];
-        while (roots.length) {
-          const root = roots.shift();
 
-          // search likely clickable tags
-          const candidates = root.querySelectorAll?.("a,button,div,span") || [];
-          for (const el of candidates) {
-            const t = (el.textContent || "").trim();
-            if (t === "Condition report" || t.includes("Condition report")) return el;
-          }
+def wait_for_carfax_url(driver, timeout=15, poll=0.25):
+    end = time.time() + timeout
 
-          const all = root.querySelectorAll?.("*") || [];
-          for (const el of all) if (el.shadowRoot) roots.push(el.shadowRoot);
+    js = r"""
+    function findCarfax() {
+      const roots = [document];
+      while (roots.length) {
+        const r = roots.shift();
+
+        // anchors
+        const as = r.querySelectorAll ? r.querySelectorAll("a[href]") : [];
+        for (const a of as) {
+          const href = a.href || a.getAttribute("href");
+          if (href && /vhr\.carfax\.ca/i.test(href)) return href;
         }
-        return null;
+
+        // ignite-link components
+        const ls = r.querySelectorAll ? r.querySelectorAll("ignite-link") : [];
+        for (const l of ls) {
+          const hrefAttr = l.getAttribute("href");
+          if (hrefAttr && /vhr\.carfax\.ca/i.test(hrefAttr)) return hrefAttr;
+
+          const a = l.shadowRoot && l.shadowRoot.querySelector && l.shadowRoot.querySelector("a[href]");
+          const href = a && (a.href || a.getAttribute("href"));
+          if (href && /vhr\.carfax\.ca/i.test(href)) return href;
+        }
+
+        // descend into shadow roots
+        const els = r.querySelectorAll ? r.querySelectorAll("*") : [];
+        for (const el of els) if (el.shadowRoot) roots.push(el.shadowRoot);
+      }
+      return null;
+    }
+    return findCarfax();
+    """
+
+    last = None
+    while time.time() < end:
+        last = driver.execute_script(js)
+        if last:
+            return last
+        time.sleep(poll)
+
+    return None
+
+
+def deep_find_by_exact_text(driver, text: str, timeout=40):
+    script = r"""
+    const text = arguments[0];
+
+    function deepQueryAll(root=document) {
+      const out = [];
+      const roots = [root];
+
+      while (roots.length) {
+        const r = roots.shift();
+        if (r.querySelectorAll) out.push(...r.querySelectorAll("*"));
+
+        const all = r.querySelectorAll ? r.querySelectorAll("*") : [];
+        for (const el of all) if (el.shadowRoot) roots.push(el.shadowRoot);
+      }
+      return out;
+    }
+
+    const el = deepQueryAll()
+      .find(n => n.childElementCount === 0 && n.textContent.trim() === text);
+
+    return el || null;
+    """
+    end = WebDriverWait(driver, timeout)
+    return end.until(lambda d: d.execute_script(script, text))
+
+def js_real_click(driver, el):
+    driver.execute_script(r"""
+      const el = arguments[0];
+      el.scrollIntoView({ block: "center", inline: "center" });
+      el.focus();
+
+      // if text node itself, climb to clickable
+      const target = el.closest("a, button, [role='button'], .cursor-pointer") || el;
+
+      const opts = { bubbles: true, cancelable: true, view: window };
+
+      try {
+        target.dispatchEvent(new PointerEvent("pointerdown", { ...opts, pointerId: 1, pointerType: "mouse", isPrimary: true }));
+        target.dispatchEvent(new PointerEvent("pointerup",   { ...opts, pointerId: 1, pointerType: "mouse", isPrimary: true }));
+      } catch (e) {}
+
+      target.dispatchEvent(new MouseEvent("mousedown", opts));
+      target.dispatchEvent(new MouseEvent("mouseup", opts));
+      target.dispatchEvent(new MouseEvent("click", opts));
+    """, el)
+
+
+def get_carfax_url_deep(driver):
+    return driver.execute_script(r"""
+      function allRoots() {
+        const roots = [document];
+        const out = [];
+        while (roots.length) {
+          const r = roots.shift();
+          out.push(r);
+          const els = r.querySelectorAll ? r.querySelectorAll("*") : [];
+          for (const el of els) if (el.shadowRoot) roots.push(el.shadowRoot);
+        }
+        return out;
+      }
+
+      let best = null;
+
+      for (const r of allRoots()) {
+        // anchors
+        const as = r.querySelectorAll ? r.querySelectorAll("a[href]") : [];
+        for (const a of as) {
+          const href = a.href || a.getAttribute("href");
+          if (href && /vhr\.carfax\.ca/i.test(href)) return href;
+          if (!best && href && /carfax/i.test(href)) best = href;
+        }
+
+        // ignite-link
+        const ls = r.querySelectorAll ? r.querySelectorAll("ignite-link") : [];
+        for (const l of ls) {
+          const hrefAttr = l.getAttribute("href");
+          const a = l.shadowRoot && l.shadowRoot.querySelector && l.shadowRoot.querySelector("a[href]");
+          const href = hrefAttr || (a && (a.href || a.getAttribute("href")));
+          if (href && /vhr\.carfax\.ca/i.test(href)) return href;
+          if (!best && href && /carfax/i.test(href)) best = href;
+        }
+      }
+      return best;
     """)
 
-    js_real_click(driver, btn)
 
-    # If it opens a new tab, switch to it
-    WebDriverWait(driver, 10).until(lambda d: len(d.window_handles) >= len(old_handles))
-    new_handles = [h for h in driver.window_handles if h not in old_handles]
-    if new_handles:
-        driver.switch_to.window(new_handles[0])
 
-    return True
 
-def get_carfax_url(driver, timeout=40):
-    link = wait_deep(driver, timeout, """
-        const roots = [document];
-        while (roots.length) {
-          const root = roots.shift();
-
-          const el =
-            root.querySelector?.("ignite-link[href*='vhr.carfax.ca'], a[href*='vhr.carfax.ca']");
-          if (el) return el;
-
-          const all = root.querySelectorAll?.("*") || [];
-          for (const n of all) if (n.shadowRoot) roots.push(n.shadowRoot);
-        }
-        return null;
-    """)
-
-    url = link.get_attribute("href")
-    return url
-
-def wait_quickview_vin(driver, vin: str, timeout=40):
-    vin = vin.strip().upper()
-    WebDriverWait(driver, timeout).until(lambda d: d.execute_script("""
-        const vin = arguments[0];
-
-        const roots = [document];
-        while (roots.length) {
-          const root = roots.shift();
-
-          const el = root.querySelector?.("[data-testid='quickview-vin']");
-          if (el) {
-            const t = (el.textContent || "").trim().toUpperCase();
-            return t === vin;
-          }
-
-          const all = root.querySelectorAll?.("*") || [];
-          for (const n of all) if (n.shadowRoot) roots.push(n.shadowRoot);
-        }
-        return false;
-    """, vin))
-
-def wait_quickview_vin(driver, vin: str, timeout=40):
-    vin = vin.strip().upper()
-    WebDriverWait(driver, timeout).until(lambda d: d.execute_script("""
-        const vin = arguments[0];
-
-        const roots = [document];
-        while (roots.length) {
-          const root = roots.shift();
-
-          const el = root.querySelector?.("[data-testid='quickview-vin']");
-          if (el) {
-            const t = (el.textContent || "").trim().toUpperCase();
-            return t === vin;
-          }
-
-          const all = root.querySelectorAll?.("*") || [];
-          for (const n of all) if (n.shadowRoot) roots.push(n.shadowRoot);
-        }
-        return false;
-    """, vin))
 
 def download_carfax_for_vin(driver, wait, vin: str, download_dir: str, carfax_dir: str, name_mode="last4") -> bool:
     vin = (vin or "").strip().upper()
@@ -404,7 +463,7 @@ def download_carfax_for_vin(driver, wait, vin: str, download_dir: str, carfax_di
     return deepQuerySelectorAllCount(selector);
     """, '[data-testid="segment-tab-order-history"]')
 
-    print("deep matches:", count)
+    print("Order history tab match", count)
 
 
     try:
@@ -417,21 +476,15 @@ def download_carfax_for_vin(driver, wait, vin: str, download_dir: str, carfax_di
     # Step 3: click the VIN card
     click_history_card_by_vin(driver, vin, timeout=40)
 
-    # Step 3b: wait until right panel is definitely on that VIN
-    wait_quickview_vin(driver, vin, timeout=40)
 
-    # Step 4: go to Condition report via href (no click)
-    condition_href = get_condition_report_href(driver, timeout=40)
-    if not condition_href:
-        raise Exception("Could not find Condition report href")
-
-    driver.get(condition_href)
+    click_condition_report_and_switch(driver, timeout=40)
 
 
-    # ✅ Step 5: get carfax href (no CSS-only wait)
-    carfax_url = get_carfax_url(driver, timeout=40)
+    carfax_url = wait_for_carfax_url(driver, timeout=20)
+    print("carfax_url:", carfax_url)
+
     if not carfax_url:
-        return False
+        raise Exception("CARFAX URL never appeared (lazy-load)")
 
     driver.get(carfax_url)
 
