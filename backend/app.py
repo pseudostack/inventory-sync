@@ -169,6 +169,8 @@ def admin_panel():
             if (!pollTimer) pollTimer = setInterval(pollUpdate, 2000);
             pollUpdate();
         }
+        pollUpdate();
+        if (!pollTimer) pollTimer = setInterval(pollUpdate, 2000);
       </script>
     </body>
     </html>
