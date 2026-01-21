@@ -15,6 +15,8 @@ import requests
 import re
 import glob
 import traceback
+import base64
+
 
 
 import pandas as pd
@@ -52,6 +54,19 @@ OPENLANE_PASS = os.environ["OPENLANE_PASS"]
 
 FLASK_CARFAX_DIR = "/root/inventory-sync/backend/static/carfax"  # adjust if different
 os.makedirs(FLASK_CARFAX_DIR, exist_ok=True)
+
+def save_current_page_as_pdf(driver, out_path: str):
+    # Make sure the page is fully loaded before printing
+    pdf = driver.execute_cdp_cmd("Page.printToPDF", {
+        "printBackground": True,
+        "preferCSSPageSize": True,   # respects page CSS if set
+        # "paperWidth": 8.5,         # optional: Letter sizing
+        # "paperHeight": 11,
+        # "marginTop": 0.4, "marginBottom": 0.4, "marginLeft": 0.4, "marginRight": 0.4
+    })
+    data = base64.b64decode(pdf["data"])
+    with open(out_path, "wb") as f:
+        f.write(data)
 
 def newest_file(pattern: str):
     files = glob.glob(pattern)
@@ -428,6 +443,8 @@ def download_carfax_for_vin(driver, wait, vin: str, download_dir: str, carfax_di
 
     # If already downloaded, skip
     if os.path.exists(target_path) and os.path.getsize(target_path) > 0:
+        print(f"[{vin}] START download_carfax_for_vin; current_url={driver.current_url}")
+
         return True
 
     time.sleep(5)
@@ -435,6 +452,8 @@ def download_carfax_for_vin(driver, wait, vin: str, download_dir: str, carfax_di
     print(f"[{vin}] going to purchases…")
     driver.get("https://app.openlane.ca/purchases")
     print(f"[{vin}] now at:", driver.current_url)
+    print(f"[{vin}] after purchases GET; current_url={driver.current_url}")
+    print(f"[{vin}] handles={driver.window_handles} current_handle={driver.current_window_handle}")
 
     time.sleep(5)
 
@@ -472,9 +491,14 @@ def download_carfax_for_vin(driver, wait, vin: str, download_dir: str, carfax_di
         print("exception clicking order history:", repr(e))
         traceback.print_exc()
 
+    filter_order_history_by_vin(driver, vin)
      
     # Step 3: click the VIN card
-    click_history_card_by_vin(driver, vin, timeout=40)
+    try:
+        click_history_card_by_vin(driver, vin, timeout=40)
+    except TimeoutException:
+        print(f"[{vin}] NOT FOUND in Order History (timeout) — skipping")
+        return False
 
 
     click_condition_report_and_switch(driver, timeout=40)
@@ -488,18 +512,16 @@ def download_carfax_for_vin(driver, wait, vin: str, download_dir: str, carfax_di
 
     driver.get(carfax_url)
 
-    # 7) Wait for PDF download to complete
-    pdf_path = wait_for_new_pdf(download_dir, timeout=90)
-    if not pdf_path:
-        # Sometimes the Carfax link opens a page with a download button.
-        # If that happens, inspect that page and add a click here.
-        return False
-
-    # 8) Move + rename
+    # 7) Save current Carfax page as a PDF (window.print() won't download in headless)
     if os.path.exists(target_path):
         os.remove(target_path)
-    os.rename(pdf_path, target_path)
-    return True
+
+    # give the report a moment to finish rendering
+    time.sleep(2)
+
+    save_current_page_as_pdf(driver, target_path)
+
+    return os.path.exists(target_path) and os.path.getsize(target_path) > 0
 
 if system_name == "Darwin":  # macOS
     DOWNLOAD_DIR = os.path.expanduser("~/Downloads")
@@ -534,6 +556,35 @@ def set_mat_select_by_text(data_cy: str, text: str):
         By.CSS_SELECTOR, f"mat-select[data-cy='{data_cy}']"
     ).text)
 
+def filter_order_history_by_vin(driver, vin: str,timeout=20):
+    vin = (vin or "").strip().upper()
+
+    el = WebDriverWait(driver, timeout).until(lambda d: d.execute_script(r"""
+        function deepQuerySelector(selector) {
+        const roots = [document];
+        while (roots.length) {
+            const r = roots.shift();
+            const el = r.querySelector?.(selector);
+            if (el) return el;
+            const all = r.querySelectorAll ? r.querySelectorAll("*") : [];
+            for (const node of all) if (node.shadowRoot) roots.push(node.shadowRoot);
+        }
+        return null;
+        }
+        return deepQuerySelector('input[data-test="vin-search"]');
+    """))
+
+    driver.execute_script(r"""
+        const el = arguments[0];
+        const val = arguments[1];
+        el.focus();
+        el.value = val;
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+        el.dispatchEvent(new Event("change", { bubbles: true }));
+    """, el, vin)
+
+    time.sleep(1)
+
 # --- Setup Chrome ---
 chrome_options = Options()
 
@@ -559,8 +610,8 @@ driver = webdriver.Chrome(options=chrome_options)
 
 try:
 
-    ''' start of --codded out for debugging ---  '''
-    '''
+    ''' ***************************start of --codded out for debugging ---***************************  '''
+    
 
     # Step 1: Log in
     driver.get(DEALERPULL_LOGIN_URL)
@@ -640,8 +691,9 @@ try:
 
 
     
-    '''
-    '''   -- end of coded out for debugging '''
+   
+    '''   *************************** end of coded out for debugging *************************** '''
+
 
     # Step 8: Rename and upload
     downloaded_path = os.path.join(DOWNLOAD_DIR, EXPORTED_FILENAME)
@@ -669,10 +721,22 @@ try:
 
     vins = [str(v).strip().upper() for v in df["VIN"].dropna().tolist()]
 
+    print("VIN count:", len(vins))
+    print("First 25 VINs:")
+    for i, v in enumerate(vins[:25], 1):
+        print(i, repr(v), "len=", len(v))
+
+    bad = [v for v in vins if len(v) != 17]
+    print("Bad VINs (len != 17):", len(bad))
+    for v in bad[:25]:
+        print("BAD", repr(v), "len=", len(v))
+
     wait = WebDriverWait(driver, 25)
     login_openlane(driver, wait)   # login ONCE
 
     for vin in vins:
+        print("\nProcessing VIN:", repr(vin), "len=", len(vin), "last8=", vin[-8:])
+
         target_pdf = CARFAX_DIR / f"{vin[-4:]}_carfax.pdf"
         if not target_pdf.exists():
             print ("carfax for this vin doesn't exist")
@@ -680,6 +744,8 @@ try:
 
             ok = download_carfax_for_vin(driver, wait, vin, DOWNLOAD_DIR, str(CARFAX_DIR), name_mode="last4")
             print(vin, "carfax:", "OK" if ok else "FAILED")
+        else: 
+            print("vin exists, skipping")
 
 
 
