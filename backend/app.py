@@ -134,7 +134,9 @@ def admin_panel():
             let data;
             try { data = JSON.parse(text); }
             catch { data = { status: "Failed", error: text }; }
-            status.innerText = data.status === 'Update triggered' ? '✅ Update Complete' : '❌ Update Failed';
+            if (data.status === "Update started") status.innerText = "✅ Update Started";
+            else if (data.status === "Already running") status.innerText = "⏳ Update already running";
+            else status.innerText = "❌ Update Failed";
             log.innerText = data.output || data.error || 'No details.';
             log.style.display = 'block';
           } catch (err) {
