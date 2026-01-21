@@ -26,6 +26,7 @@ os.makedirs(CARFAX_FOLDER, exist_ok=True)
 
 UPDATE_LOCK = os.path.join(BASE_DIR, "update_inventory.lock")
 UPDATE_LOG  = os.path.join(BASE_DIR, "last_update_run.log")
+UPDATE_STATUS = os.path.join(BASE_DIR, "update_status.txt")
 
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'svg'}
 os.makedirs(CARFAX_FOLDER, exist_ok=True)
@@ -122,6 +123,27 @@ def admin_panel():
       <a href="/logout" class="btn">Logout</a>
 
       <script>
+        let pollTimer = null;
+                                                            
+        async function pollUpdate() {
+            const statusEl = document.getElementById('status');
+            const logEl = document.getElementById('log');
+
+            const s = await fetch('/update-status').then(r => r.json());
+            const l = await fetch('/update-log').then(r => r.json());
+
+            if (s.running) statusEl.innerText = "Status: Running…";
+            else statusEl.innerText = "Status: " + (s.status || "Ready");
+
+            logEl.innerText = l.log || "";
+            logEl.style.display = 'block';
+
+            if (!s.running && pollTimer) {
+                clearInterval(pollTimer);
+                pollTimer = null;
+            }
+        }
+
         async function triggerUpdate() {
           const status = document.getElementById('status');
           const log = document.getElementById('log');
@@ -144,8 +166,8 @@ def admin_panel():
             log.innerText = err.message;
             log.style.display = 'block';
           }
-
-          setTimeout(() => { status.innerText = 'Status: Ready'; }, 5000);
+            if (!pollTimer) pollTimer = setInterval(pollUpdate, 2000);
+            pollUpdate();
         }
       </script>
     </body>
@@ -168,6 +190,21 @@ def logout():
 
 import shutil  # put this near your other imports at the top
 
+@app.route("/update-status")
+def update_status():
+    running = os.path.exists(UPDATE_LOCK)
+    status = "IDLE"
+    if os.path.exists(UPDATE_STATUS):
+        status = open(UPDATE_STATUS).read().strip() or status
+    return jsonify({"running": running, "status": status})
+
+@app.route("/update-log")
+def update_log():
+    if not os.path.exists(UPDATE_LOG):
+        return jsonify({"log": ""})
+    with open(UPDATE_LOG, "r") as f:
+        # last 4000 chars so it stays light
+        return jsonify({"log": f.read()[-4000:]})
 
 @app.route('/trigger-update', methods=['POST'])
 def trigger_update():
@@ -179,6 +216,9 @@ def trigger_update():
         # create lock
         with open(UPDATE_LOCK, "w") as f:
             f.write(str(datetime.datetime.now()))
+
+        with open(UPDATE_STATUS, "w") as f:
+            f.write("RUNNING")
 
         out = open(UPDATE_LOG, "w", buffering=1)
 
@@ -199,7 +239,14 @@ def trigger_update():
 
         # auto-remove lock when process ends
         def _cleanup():
-            p.wait()
+            code = p.wait()  # <-- capture return code
+
+            try:
+                with open(UPDATE_STATUS, "w") as f:
+                    f.write("OK" if code == 0 else f"FAILED ({code})")
+            except Exception:
+                pass
+
             try:
                 out.close()
             except Exception:
@@ -221,14 +268,6 @@ def trigger_update():
             pass
         return jsonify({"status": "Failed", "error": repr(e)}), 500
 
-
-@app.route('/update-log')
-def update_log():
-    path = os.path.join(BASE_DIR, "last_update_run.log")
-    if not os.path.exists(path):
-        return jsonify({"log": ""})
-    with open(path, "r") as f:
-        return jsonify({"log": f.read()})
     
 # --- Upload Images ---
 def handle_file_upload(request_file, name):
