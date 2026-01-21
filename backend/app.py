@@ -6,6 +6,7 @@ import datetime
 import subprocess
 import pandas as pd
 import socket
+import sys, threading
 
 app = Flask(__name__)
 app.secret_key = 'super-secret-key'  # TODO: Use environment variable in production
@@ -22,6 +23,9 @@ INVENTORY_FILE = os.path.join(BASE_DIR, "inventory.csv")
 LOG_FILE = os.path.join(BASE_DIR, "update_log.txt")
 app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
 os.makedirs(CARFAX_FOLDER, exist_ok=True)
+
+UPDATE_LOCK = os.path.join(BASE_DIR, "update_inventory.lock")
+UPDATE_LOG  = os.path.join(BASE_DIR, "last_update_run.log")
 
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'svg'}
 os.makedirs(CARFAX_FOLDER, exist_ok=True)
@@ -163,30 +167,58 @@ def logout():
 import shutil  # put this near your other imports at the top
 
 
-# --- Trigger Inventory Update ---
 @app.route('/trigger-update', methods=['POST'])
 def trigger_update():
+    # refuse if already running
+    if os.path.exists(UPDATE_LOCK):
+        return jsonify({"status": "Already running"}), 409
+
     try:
-        out_path = os.path.join(BASE_DIR, "last_update_run.log")
-        out = open(out_path, "w")  # keep file handle open for the child
+        # create lock
+        with open(UPDATE_LOCK, "w") as f:
+            f.write(str(datetime.datetime.now()))
+
+        out = open(UPDATE_LOG, "w", buffering=1)
+
+        env = os.environ.copy()
+        env["PYTHONUNBUFFERED"] = "1"
+
+        # use *this* venv python / interpreter (portable)
+        python_exe = sys.executable
+        script_path = os.path.join(BASE_DIR, "update_inventory.py")
 
         p = subprocess.Popen(
-            ["/root/inventory-sync/backend/venv/bin/python3", "/root/inventory-sync/backend/update_inventory.py"],
-            cwd="/root/inventory-sync/backend",
-            env=os.environ.copy(),
+            [python_exe, "-u", script_path],
+            cwd=BASE_DIR,
+            env=env,
             stdout=out,
             stderr=subprocess.STDOUT
         )
 
-        with open(LOG_FILE, 'a') as f:
-            f.write(f"{datetime.datetime.now()} - Update STARTED (pid={p.pid})\n")
+        # auto-remove lock when process ends
+        def _cleanup():
+            p.wait()
+            try:
+                out.close()
+            except Exception:
+                pass
+            try:
+                if os.path.exists(UPDATE_LOCK):
+                    os.remove(UPDATE_LOCK)
+            except Exception:
+                pass
 
-        return jsonify({"status": "Update started", "pid": p.pid, "log": "/update-log"})
+        threading.Thread(target=_cleanup, daemon=True).start()
+
+        return jsonify({"status": "Update started", "pid": p.pid})
     except Exception as e:
-        # log the exception server-side too
-        with open(LOG_FILE, 'a') as f:
-            f.write(f"{datetime.datetime.now()} - Update FAILED to start: {repr(e)}\n")
+        try:
+            if os.path.exists(UPDATE_LOCK):
+                os.remove(UPDATE_LOCK)
+        except Exception:
+            pass
         return jsonify({"status": "Failed", "error": repr(e)}), 500
+
 
 @app.route('/update-log')
 def update_log():
