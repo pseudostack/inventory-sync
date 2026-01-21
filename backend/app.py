@@ -167,26 +167,21 @@ import shutil  # put this near your other imports at the top
 @app.route('/trigger-update', methods=['POST'])
 def trigger_update():
     try:
-        result = subprocess.run(
+        # start script without blocking the web request
+        p = subprocess.Popen(
             ["python3", "/root/inventory-sync/backend/update_inventory.py"],
-            capture_output=True,
-            text=True,
             cwd="/root/inventory-sync/backend",
             env=os.environ.copy(),
-            check=True
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True
         )
 
-        shutil.copy("/root/inventory-sync/downloads/inventory.csv", INVENTORY_FILE)
-
+        # optional: log that it started
         with open(LOG_FILE, 'a') as f:
-            f.write(f"{datetime.datetime.now()} - Inventory updated\n")
-        return jsonify({
-            "status": "Update triggered",
-            "output": result.stdout
-        })
-    except subprocess.CalledProcessError as e:
-        return jsonify({"status": "Failed", "error": e.stderr or e.stdout}), 500
+            f.write(f"{datetime.datetime.now()} - Update STARTED (pid={p.pid})\n")
 
+        return jsonify({"status": "Update started", "pid": p.pid})
     except Exception as e:
         return jsonify({"status": "Failed", "error": repr(e)}), 500
 
