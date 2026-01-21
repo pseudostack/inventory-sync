@@ -233,11 +233,18 @@ def admin_carfax():
 
     if os.path.exists(INVENTORY_FILE):
         print ("os path exists inventory.csv!")
-        df = pd.read_csv(
-            INVENTORY_FILE,
-            engine="python",
-            on_bad_lines="skip"
-        )
+        df = pd.read_csv(INVENTORY_FILE, dtype=str, keep_default_na=False)
+
+        # make sure VIN key exists for your template
+        if "vin" not in df.columns and "VIN" in df.columns:
+            df["vin"] = df["VIN"]
+
+        # make sure Links is always a string (no NaN floats)
+        if "Links" not in df.columns:
+            df["Links"] = ""
+        else:
+            df["Links"] = df["Links"].fillna("").astype(str)
+
         cars = df.to_dict(orient='records')
     else:
         cars = []
