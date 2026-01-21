@@ -126,7 +126,10 @@ def admin_panel():
 
           try {
             const res = await fetch('/trigger-update', { method: 'POST' });
-            const data = await res.json();
+            const text = await res.text();
+            let data;
+            try { data = JSON.parse(text); }
+            catch { data = { status: "Failed", error: text }; }
             status.innerText = data.status === 'Update triggered' ? '✅ Update Complete' : '❌ Update Failed';
             log.innerText = data.output || data.error || 'No details.';
             log.style.display = 'block';
@@ -168,6 +171,8 @@ def trigger_update():
             ["python3", "/root/inventory-sync/backend/update_inventory.py"],
             capture_output=True,
             text=True,
+            cwd="/root/inventory-sync/backend",
+            env=os.environ.copy(),
             check=True
         )
 
@@ -180,10 +185,10 @@ def trigger_update():
             "output": result.stdout
         })
     except subprocess.CalledProcessError as e:
-        return jsonify({
-            "status": "Failed",
-            "error": e.stderr
-        }), 500
+        return jsonify({"status": "Failed", "error": e.stderr or e.stdout}), 500
+
+    except Exception as e:
+        return jsonify({"status": "Failed", "error": repr(e)}), 500
 
 # --- Upload Images ---
 def handle_file_upload(request_file, name):
@@ -246,6 +251,15 @@ def admin_carfax():
             df["Links"] = df["Links"].fillna("").astype(str)
 
         cars = df.to_dict(orient='records')
+        for car in cars:
+            vin = (car.get("vin") or "").strip()
+            if not vin:
+                continue
+            last4 = vin[-4:]
+            fname = f"{last4}_carfax.pdf"
+            fpath = os.path.join(CARFAX_FOLDER, fname)
+            if os.path.exists(fpath):
+                car["Links"] = f"/static/carfax/{fname}"
     else:
         cars = []
 
