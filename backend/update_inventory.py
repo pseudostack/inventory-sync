@@ -424,7 +424,7 @@ def get_carfax_url_deep(driver):
 
 
 
-def download_carfax_for_vin(driver, wait, vin: str, download_dir: str, carfax_dir: str, name_mode="last4") -> bool:
+def download_carfax_for_vin(driver, wait, vin: str, download_dir: str, carfax_dir: str, name_mode="last4", main_handle=None):
     vin = (vin or "").strip().upper()
     if not vin:
         return False
@@ -520,6 +520,8 @@ def download_carfax_for_vin(driver, wait, vin: str, download_dir: str, carfax_di
     time.sleep(2)
 
     save_current_page_as_pdf(driver, target_path)
+    if main_handle:
+        back_to_openlane(driver, main_handle)
 
     return os.path.exists(target_path) and os.path.getsize(target_path) > 0
 
@@ -555,6 +557,15 @@ def set_mat_select_by_text(data_cy: str, text: str):
     wait.until(lambda d: text in d.find_element(
         By.CSS_SELECTOR, f"mat-select[data-cy='{data_cy}']"
     ).text)
+
+
+def back_to_openlane(driver, main_handle):
+    # close everything except main handle
+    for h in list(driver.window_handles):
+        if h != main_handle:
+            driver.switch_to.window(h)
+            driver.close()
+    driver.switch_to.window(main_handle)
 
 def filter_order_history_by_vin(driver, vin: str,timeout=20):
     vin = (vin or "").strip().upper()
@@ -733,6 +744,7 @@ try:
 
     wait = WebDriverWait(driver, 25)
     login_openlane(driver, wait)   # login ONCE
+    OPENLANE_HANDLE = driver.current_window_handle
 
     for vin in vins:
         print("\nProcessing VIN:", repr(vin), "len=", len(vin), "last8=", vin[-8:])
@@ -742,7 +754,8 @@ try:
             print ("carfax for this vin doesn't exist")
             print("Before download, URL is:", driver.current_url)
 
-            ok = download_carfax_for_vin(driver, wait, vin, DOWNLOAD_DIR, str(CARFAX_DIR), name_mode="last4")
+            ok = download_carfax_for_vin(driver, wait, vin, DOWNLOAD_DIR, str(CARFAX_DIR), name_mode="last4", main_handle=OPENLANE_HANDLE)
+
             print(vin, "carfax:", "OK" if ok else "FAILED")
         else: 
             print("vin exists, skipping")
