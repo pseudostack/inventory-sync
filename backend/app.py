@@ -167,24 +167,35 @@ import shutil  # put this near your other imports at the top
 @app.route('/trigger-update', methods=['POST'])
 def trigger_update():
     try:
-        # start script without blocking the web request
+        out_path = os.path.join(BASE_DIR, "last_update_run.log")
+        out = open(out_path, "w")  # keep file handle open for the child
+
         p = subprocess.Popen(
-            ["python3", "/root/inventory-sync/backend/update_inventory.py"],
+            ["/root/inventory-sync/backend/venv/bin/python", "/root/inventory-sync/backend/update_inventory.py"],
             cwd="/root/inventory-sync/backend",
             env=os.environ.copy(),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True
+            stdout=out,
+            stderr=subprocess.STDOUT
         )
 
-        # optional: log that it started
         with open(LOG_FILE, 'a') as f:
             f.write(f"{datetime.datetime.now()} - Update STARTED (pid={p.pid})\n")
 
-        return jsonify({"status": "Update started", "pid": p.pid})
+        return jsonify({"status": "Update started", "pid": p.pid, "log": "/update-log"})
     except Exception as e:
+        # log the exception server-side too
+        with open(LOG_FILE, 'a') as f:
+            f.write(f"{datetime.datetime.now()} - Update FAILED to start: {repr(e)}\n")
         return jsonify({"status": "Failed", "error": repr(e)}), 500
 
+@app.route('/update-log')
+def update_log():
+    path = os.path.join(BASE_DIR, "last_update_run.log")
+    if not os.path.exists(path):
+        return jsonify({"log": ""})
+    with open(path, "r") as f:
+        return jsonify({"log": f.read()})
+    
 # --- Upload Images ---
 def handle_file_upload(request_file, name):
     if request_file and allowed_file(request_file.filename):
