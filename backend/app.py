@@ -171,7 +171,7 @@ def trigger_update():
         out = open(out_path, "w")  # keep file handle open for the child
 
         p = subprocess.Popen(
-            ["/root/inventory-sync/backend/venv/bin/python", "/root/inventory-sync/backend/update_inventory.py"],
+            ["/root/inventory-sync/backend/venv/bin/python3", "/root/inventory-sync/backend/update_inventory.py"],
             cwd="/root/inventory-sync/backend",
             env=os.environ.copy(),
             stdout=out,
