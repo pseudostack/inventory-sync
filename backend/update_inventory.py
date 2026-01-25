@@ -907,7 +907,9 @@ try:
 
 
             if target_pdf.exists() and target_pdf.stat().st_size > 0:
-                print("vin exists, skipping")
+                df.loc[df["VIN"].astype(str).str.strip().str.upper() == vin, "Links"] = \
+                    f"https://berlinautosales.ca/carfax/{vin}_carfax.pdf"
+                print("pdf exists locally, skipping download")
                 continue
 
             print("carfax for this vin ", vin, " doesn't exist,")
@@ -954,16 +956,16 @@ try:
 
         # Step 9: Upload via FTP
 
-    def ftp_cwd_mkdir_p(ftp, path: str):
-        """Ensure remote path exists, then cwd into it. Path like 'carfax' or 'public_html/carfax'."""
-        parts = [p for p in path.strip("/").split("/") if p]
-        for p in parts:
-            try:
-                ftp.cwd(p)
-            except Exception:
-                ftp.mkd(p)
-                ftp.cwd(p)
 
+    def ftp_cwd_p(ftp, path: str):
+        parts = [p for p in path.strip("/").split("/") if p]
+        for part in parts:
+            try:
+                ftp.cwd(part)
+            except Exception:
+                ftp.mkd(part)
+                ftp.cwd(part)
+                
     # write updated CSV (with Links) BEFORE uploading
     df.to_csv(final_path, index=False)
 
@@ -972,24 +974,19 @@ try:
         ftp.login(FTP_USER, FTP_PASS)
 
         # 1) Upload inventory.csv to web root (adjust if your host needs public_html/)
-        try:
-            ftp.cwd("/")
-        except Exception:
-            pass
+        base_dir = ftp.pwd()  # this is the directory inventory.csv will be uploaded into
+        print("FTP base dir:", base_dir)
 
+        # 1) Upload inventory.csv into base_dir
         with open(final_path, "rb") as f:
             ftp.storbinary("STOR inventory.csv", f)
 
-        # 2) Upload PDFs into /carfax (adjust path if needed: 'public_html/carfax')
-        try:
-            ftp.cwd("/")
-        except Exception:
-            pass
 
-        ftp_cwd_mkdir_p(ftp, "carfax")
+        ftp.cwd(base_dir)          # make sure we’re back at the same level
+        ftp_cwd_p(ftp, "carfax")   # create + enter carfax folder
 
         pdfs = sorted(CARFAX_DIR.glob("*_carfax.pdf"))
-        print(f"Uploading {len(pdfs)} carfax PDFs to /carfax ...")
+        print(f"Uploading {len(pdfs)} PDFs to {base_dir}/carfax ...")
 
         for p in pdfs:
             if p.stat().st_size <= 0:
