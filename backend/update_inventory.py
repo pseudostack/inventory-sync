@@ -53,7 +53,6 @@ LOGIN_PASS = "B2010luetooth5!"
 OPENLANE_USER = os.environ["OPENLANE_USER"]
 OPENLANE_PASS = os.environ["OPENLANE_PASS"]
 
-os.makedirs(FLASK_CARFAX_DIR, exist_ok=True)
 
 def save_current_page_as_pdf(driver, out_path: str):
     # Make sure the page is fully loaded before printing
