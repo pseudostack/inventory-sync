@@ -898,12 +898,14 @@ try:
     OPENLANE_HANDLE = driver.current_window_handle
 
     failed_vins = []
+    existing = list(Path(CARFAX_DIR).glob("*_carfax.pdf"))
+    print("Existing PDFs in CARFAX_DIR:", len(existing))
 
     for vin in vins:
         print("\nProcessing VIN:", repr(vin), "len=", len(vin), "last8=", vin[-8:])
 
         try:
-            target_pdf = CARFAX_DIR / f"{vin}_carfax.pdf"
+            target_pdf = Path(CARFAX_DIR) / f"{vin}_carfax.pdf"
 
 
             if target_pdf.exists() and target_pdf.stat().st_size > 0:
@@ -968,6 +970,10 @@ try:
                 
     # write updated CSV (with Links) BEFORE uploading
     df.to_csv(final_path, index=False)
+    backend_inventory = str(BASE_DIR / "inventory.csv")
+    import shutil
+    shutil.copy2(final_path, backend_inventory)
+    print("Copied inventory.csv to:", backend_inventory)
 
     print("Uploading to FTP...")
     with FTP(FTP_HOST) as ftp:
@@ -986,12 +992,20 @@ try:
         print("After inventory upload, PWD:", ftp.pwd())
 
 
-        ftp_cwd_p(ftp, "carfax")   # create + enter carfax folder
+        def ensure_dir(ftp, dirname):
+            try:
+                ftp.cwd(dirname)
+            except Exception:
+                ftp.mkd(dirname)
+                ftp.cwd(dirname)
+
+        ensure_dir(ftp, "carfax")
+
         print("Uploading PDFs into:", ftp.pwd())  # should be .../public_html/carfax
 
-
-        pdfs = sorted(Path(CARFAX_DIR).glob("*_carfax.pdf"))
-        print(f"Uploading {len(pdfs)} PDFs to {base_dir}/carfax ...")
+        print(f"Uploading {len(pdfs)} PDFs to {base_dir}carfax ...")
+        local_pdfs = sorted(Path(CARFAX_DIR).glob("*_carfax.pdf"))
+        print(f"Uploading {len(local_pdfs)} PDFs to {ftp.pwd()} ...")
 
         for p in pdfs:
             if p.stat().st_size <= 0:
