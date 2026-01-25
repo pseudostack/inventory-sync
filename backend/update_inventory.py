@@ -436,6 +436,19 @@ def get_carfax_url_deep(driver):
     """)
 
 
+def ftp_ensure_dir(ftp, path):
+    # path like "carfax" or "public_html/carfax"
+    parts = [p for p in path.strip("/").split("/") if p]
+    for p in parts:
+        try:
+            ftp.cwd(p)
+        except Exception:
+            ftp.mkd(p)
+            ftp.cwd(p)
+
+def ftp_upload_file(ftp, local_path, remote_name):
+    with open(local_path, "rb") as f:
+        ftp.storbinary(f"STOR {remote_name}", f)
 
 
 
@@ -932,11 +945,23 @@ try:
 
 
     # Step 9: Upload via FTP
+    FTP_CARFAX_DIR = "carfax"
+
     print("Uploading to FTP...")
     with FTP(FTP_HOST) as ftp:
         ftp.login(FTP_USER, FTP_PASS)
-        with open(final_path, 'rb') as f:
+
+        # upload inventory.csv (as you already do)
+        with open(final_path, "rb") as f:
             ftp.storbinary(f"STOR {FTP_TARGET_PATH}", f)
+
+        # upload carfax pdfs
+        ftp_ensure_dir(ftp, FTP_CARFAX_DIR)   # cd into carfax dir (create if missing)
+
+        pdfs = list((CARFAX_DIR).glob("*.pdf"))
+        print(f"Uploading {len(pdfs)} carfax PDFs...")
+        for p in pdfs:
+            ftp_upload_file(ftp, str(p), p.name)
 
     print("✅ Upload complete.")
 
