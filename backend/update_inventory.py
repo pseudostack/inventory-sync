@@ -6,7 +6,6 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, ElementClickInterceptedException
 from selenium.common.exceptions import StaleElementReferenceException
-
 from selenium.webdriver.common.action_chains import ActionChains
 
 import tempfile
@@ -469,7 +468,7 @@ def download_carfax_for_vin(driver, wait, vin: str, download_dir: str, carfax_di
 
         return True
 
-    time.sleep(5)
+    time.sleep(1)
 
     print(f"[{vin}] going to purchases…")
     driver.get("https://app.openlane.ca/purchases")
@@ -477,9 +476,7 @@ def download_carfax_for_vin(driver, wait, vin: str, download_dir: str, carfax_di
     print(f"[{vin}] after purchases GET; current_url={driver.current_url}")
     print(f"[{vin}] handles={driver.window_handles} current_handle={driver.current_window_handle}")
 
-    time.sleep(5)
-
-    print ("waited 5 seconds")
+    time.sleep(1)
 
    # 2) Click "Order History" segment button by its label
     # Your snippet: ignite-typography ... data-label="Order History"
@@ -517,16 +514,16 @@ def download_carfax_for_vin(driver, wait, vin: str, download_dir: str, carfax_di
      
     # Step 3: click the VIN card
     try:
-        click_history_card_by_vin(driver, vin, timeout=40)
+        click_history_card_by_vin(driver, vin, timeout=5)
     except TimeoutException:
         print(f"[{vin}] NOT FOUND in Order History (timeout) — skipping")
         return False
 
 
-    click_condition_report_and_switch(driver, timeout=40)
+    click_condition_report_and_switch(driver, timeout=5)
 
 
-    carfax_url = wait_for_carfax_url(driver, timeout=20)
+    carfax_url = wait_for_carfax_url(driver, timeout=5)
     print("carfax_url:", carfax_url)
 
     if not carfax_url:
@@ -633,16 +630,33 @@ def set_status_filters(driver, wait):
     # close the dropdown
     driver.find_element(By.TAG_NAME, "body").send_keys(Keys.ESCAPE)
 
-def close_overlays(driver, timeout=30):
-    try:
-        driver.find_element(By.TAG_NAME, "body").send_keys(Keys.ESCAPE)
-    except Exception:
-        pass
+def close_overlays(driver, timeout=5):
+    # Best-effort: try to close overlays but don't die if it lingers
+    end = time.time() + timeout
+    while time.time() < end:
+        try:
+            ActionChains(driver).send_keys(Keys.ESCAPE).perform()
+        except Exception:
+            pass
+        try:
+            driver.execute_script("""
+              const b = document.querySelector('.cdk-overlay-backdrop.cdk-overlay-backdrop-showing');
+              if (b) b.click();
+            """)
+        except Exception:
+            pass
 
-    WebDriverWait(driver, timeout).until(lambda d: d.execute_script("""
-      const b = document.querySelector('.cdk-overlay-backdrop.cdk-overlay-backdrop-showing');
-      return !b;
-    """))
+        gone = driver.execute_script("""
+          const b = document.querySelector('.cdk-overlay-backdrop.cdk-overlay-backdrop-showing');
+          return !b;
+        """)
+        if gone:
+            return True
+
+        time.sleep(0.2)
+
+    # don't raise TimeoutException
+    return False
 
 def wait_no_backdrop(driver, timeout=30):
     WebDriverWait(driver, timeout).until(lambda d: d.execute_script("""
@@ -752,7 +766,7 @@ try:
     """))
        
     set_status_filters(driver, wait)
-    time.sleep(3)
+    time.sleep(1)
     driver.find_element(By.TAG_NAME, "body").send_keys(Keys.ESCAPE)
     wait_no_backdrop(driver, 30)   # from earlier
 
@@ -785,7 +799,7 @@ try:
                 driver.execute_script("arguments[0].click();", box)
                 print(f"✅ Enabled export field: {label.text.strip()}")
 
-    time.sleep(2)
+    time.sleep(1)
 
     driver.find_element(By.TAG_NAME, "body").send_keys(Keys.ESCAPE)
     time.sleep(0.3)
@@ -797,7 +811,7 @@ try:
     set_mat_select_by_text(driver, wait,"page-count", "100")
 
     # Wait for the page to refresh with 100 cars
-    time.sleep(3)
+    time.sleep(1)
 
    
 
@@ -825,7 +839,7 @@ try:
     print("Exporting inventory...")
 
     # Step 7: Wait for download
-    time.sleep(5)
+    time.sleep(2)
 
 
     
@@ -872,19 +886,49 @@ try:
     login_openlane(driver, wait)   # login ONCE
     OPENLANE_HANDLE = driver.current_window_handle
 
+    failed_vins = []
+
     for vin in vins:
         print("\nProcessing VIN:", repr(vin), "len=", len(vin), "last8=", vin[-8:])
 
-        target_pdf = CARFAX_DIR / f"{vin[-4:]}_carfax.pdf"
-        if not target_pdf.exists():
-            print ("carfax for this vin doesn't exist")
+        try:
+            target_pdf = CARFAX_DIR / f"{vin[-4:]}_carfax.pdf"
+
+            if target_pdf.exists() and target_pdf.stat().st_size > 0:
+                print("vin exists, skipping")
+                continue
+
+            print("carfax for this vin ", vin, " doesn't exist,")
             print("Before download, URL is:", driver.current_url)
 
-            ok = download_carfax_for_vin(driver, wait, vin, DOWNLOAD_DIR, str(CARFAX_DIR), name_mode="last4", main_handle=OPENLANE_HANDLE)
+            ok = download_carfax_for_vin(
+                driver, wait, vin, DOWNLOAD_DIR, str(CARFAX_DIR),
+                name_mode="last4", main_handle=OPENLANE_HANDLE
+            )
 
             print(vin, "carfax:", "OK" if ok else "FAILED")
-        else: 
-            print("vin exists, skipping")
+            if not ok:
+                failed_vins.append(vin)
+
+        except Exception as e:
+            print(f"[{vin}] ERROR (skipping): {repr(e)}")
+            traceback.print_exc()
+            failed_vins.append(vin)
+
+            # try to recover browser state so the next VIN can proceed
+            try:
+                back_to_openlane(driver, OPENLANE_HANDLE)
+            except Exception:
+                pass
+
+            continue
+
+    # optional: dump failures so you can inspect later
+    if failed_vins:
+        fail_path = BASE_DIR / "failed_vins.txt"
+        with open(fail_path, "w", encoding="utf-8") as f:
+            f.write("\n".join(failed_vins))
+        print(f"\n⚠️ Failed VINs written to: {fail_path}")
 
 
 
