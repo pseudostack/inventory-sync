@@ -1002,8 +1002,6 @@ try:
         ensure_dir(ftp, "carfax")
 
         print("Uploading PDFs into:", ftp.pwd())  # should be .../public_html/carfax
-
-        print(f"Uploading {len(pdfs)} PDFs to {base_dir}carfax ...")
         local_pdfs = sorted(Path(CARFAX_DIR).glob("*_carfax.pdf"))
         print(f"Uploading {len(local_pdfs)} PDFs to {ftp.pwd()} ...")
 
