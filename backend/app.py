@@ -405,6 +405,7 @@ def upload_carfax():
         filename = f"{vin}_carfax.pdf"
         path = os.path.join(CARFAX_FOLDER, filename)
         file.save(path)
+        
 
         # Update CSV
         if os.path.exists(INVENTORY_FILE):

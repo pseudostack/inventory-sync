@@ -53,7 +53,6 @@ LOGIN_PASS = "B2010luetooth5!"
 OPENLANE_USER = os.environ["OPENLANE_USER"]
 OPENLANE_PASS = os.environ["OPENLANE_PASS"]
 
-FLASK_CARFAX_DIR = "/root/inventory-sync/backend/static/carfax"  # adjust if different
 os.makedirs(FLASK_CARFAX_DIR, exist_ok=True)
 
 def save_current_page_as_pdf(driver, out_path: str):
@@ -875,9 +874,13 @@ try:
     # ✅ NEW: read VINs + download missing carfax PDFs
     df = pd.read_csv(final_path, engine="python", on_bad_lines="skip")
 
-    # normalize VIN column name
     if "VIN" not in df.columns and "vin" in df.columns:
         df = df.rename(columns={"vin": "VIN"})
+
+    # ✅ ensure Links exists (React/UI reads this)
+    if "Links" not in df.columns:
+        df["Links"] = ""
+    df["Links"] = df["Links"].fillna("").astype(str)
 
     vins = [normalize_vin(v) for v in df["VIN"].dropna().tolist()]
     vins = [v for v in vins if len(v) == 17]  # keep only valid VINs
@@ -901,7 +904,7 @@ try:
         print("\nProcessing VIN:", repr(vin), "len=", len(vin), "last8=", vin[-8:])
 
         try:
-            target_pdf = Path(FLASK_CARFAX_DIR) / f"{vin}_carfax.pdf"
+            target_pdf = CARFAX_DIR / f"{vin}_carfax.pdf"
 
 
             if target_pdf.exists() and target_pdf.stat().st_size > 0:
@@ -913,9 +916,14 @@ try:
 
             #name mode can be last4, first4, or full
             ok = download_carfax_for_vin(
-            driver, wait, vin, DOWNLOAD_DIR, FLASK_CARFAX_DIR,
-            name_mode="full", main_handle=OPENLANE_HANDLE
+                driver, wait, vin, DOWNLOAD_DIR, str(CARFAX_DIR),
+                name_mode="full", main_handle=OPENLANE_HANDLE
             )
+
+            if ok:
+                df.loc[df["VIN"].astype(str).str.strip().str.upper() == vin, "Links"] = f"https://berlinautosales.ca/carfax/{vin}_carfax.pdf"
+            else:
+                df.loc[df["VIN"].astype(str).str.strip().str.upper() == vin, "Links"] = ""
 
             print(vin, "carfax:", "OK" if ok else "FAILED")
             if not ok:
@@ -923,6 +931,7 @@ try:
 
         except Exception as e:
             print(f"[{vin}] ERROR (skipping): {repr(e)}")
+            df.loc[df["VIN"].astype(str).str.strip().str.upper() == vin, "Links"] = ""
             traceback.print_exc()
             failed_vins.append(vin)
 
@@ -944,24 +953,50 @@ try:
 
 
 
-    # Step 9: Upload via FTP
-    FTP_CARFAX_DIR = "carfax"
+        # Step 9: Upload via FTP
+
+    def ftp_cwd_mkdir_p(ftp, path: str):
+        """Ensure remote path exists, then cwd into it. Path like 'carfax' or 'public_html/carfax'."""
+        parts = [p for p in path.strip("/").split("/") if p]
+        for p in parts:
+            try:
+                ftp.cwd(p)
+            except Exception:
+                ftp.mkd(p)
+                ftp.cwd(p)
+
+    # write updated CSV (with Links) BEFORE uploading
+    df.to_csv(final_path, index=False)
 
     print("Uploading to FTP...")
     with FTP(FTP_HOST) as ftp:
         ftp.login(FTP_USER, FTP_PASS)
 
-        # upload inventory.csv (as you already do)
+        # 1) Upload inventory.csv to web root (adjust if your host needs public_html/)
+        try:
+            ftp.cwd("/")
+        except Exception:
+            pass
+
         with open(final_path, "rb") as f:
-            ftp.storbinary(f"STOR {FTP_TARGET_PATH}", f)
+            ftp.storbinary("STOR inventory.csv", f)
 
-        # upload carfax pdfs
-        ftp_ensure_dir(ftp, FTP_CARFAX_DIR)   # cd into carfax dir (create if missing)
+        # 2) Upload PDFs into /carfax (adjust path if needed: 'public_html/carfax')
+        try:
+            ftp.cwd("/")
+        except Exception:
+            pass
 
-        pdfs = list((CARFAX_DIR).glob("*.pdf"))
-        print(f"Uploading {len(pdfs)} carfax PDFs...")
+        ftp_cwd_mkdir_p(ftp, "carfax")
+
+        pdfs = sorted(CARFAX_DIR.glob("*_carfax.pdf"))
+        print(f"Uploading {len(pdfs)} carfax PDFs to /carfax ...")
+
         for p in pdfs:
-            ftp_upload_file(ftp, str(p), p.name)
+            if p.stat().st_size <= 0:
+                continue
+            with open(p, "rb") as f:
+                ftp.storbinary(f"STOR {p.name}", f)
 
     print("✅ Upload complete.")
 
