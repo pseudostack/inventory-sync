@@ -336,7 +336,8 @@ def admin_carfax():
 
         cars = df.to_dict(orient='records')
         for car in cars:
-            vin = (car.get("vin") or "").strip()
+            vin = (car.get("vin") or "").strip().upper()
+            car["vin"] = vin
             if not vin:
                 continue
             fname = f"{vin}_carfax.pdf"
@@ -397,7 +398,7 @@ def upload_carfax():
     if 'logged_in' not in session:
         return 'Unauthorized', 403
 
-    vin = request.form.get('vin')
+    vin = (request.form.get('vin') or "").strip().upper()
     file = request.files.get('file')
 
     if vin and file and allowed_file(file.filename, allowed_ext={'pdf'}):
@@ -417,9 +418,12 @@ def upload_carfax():
             if "VIN" not in df.columns and "vin" in df.columns:
               df = df.rename(columns={"vin": "VIN"})
 
-            # Ensure Links column exists
+            links_col = next((c for c in df.columns if c.lower() == "links"), None)
+            if links_col and links_col != "Links":
+                df = df.rename(columns={links_col: "Links"})
             if "Links" not in df.columns:
                 df["Links"] = ""
+            df["Links"] = df["Links"].fillna("").astype(str)
             
             carfax_url = f"/static/carfax/{filename}"
             df.loc[df["VIN"] == vin, "Links"] = carfax_url
