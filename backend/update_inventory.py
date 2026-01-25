@@ -5,6 +5,8 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, ElementClickInterceptedException
+from selenium.common.exceptions import StaleElementReferenceException
+
 from selenium.webdriver.common.action_chains import ActionChains
 
 import tempfile
@@ -203,8 +205,11 @@ def login_openlane(driver, wait):
     except TimeoutException:
         pass
 
-def js_click(driver, el):
-    driver.execute_script("arguments[0].click();", el)
+def _js_click(driver, el):
+    driver.execute_script(
+        "arguments[0].scrollIntoView({block:'center'}); arguments[0].click();",
+        el
+    )
 
 def click_order_history_tab(driver, timeout=40):
     selector = '[data-testid="segment-tab-order-history"]'
@@ -258,6 +263,23 @@ def wait_deep(driver, timeout, js_returning_element, *args):
     """Wait until execute_script returns a non-null element."""
     wait = WebDriverWait(driver, timeout)
     return wait.until(lambda d: d.execute_script(js_returning_element, *args))
+
+def _wait_no_overlay(driver, wait, timeout=30):
+    WebDriverWait(driver, timeout).until(lambda d: d.execute_script(r"""
+      // any visible overlay/backdrop/spinner?
+      const sels = [
+        '.pg-loading-center-middle',
+        '.cdk-overlay-backdrop',
+        '.mat-progress-spinner',
+        'mat-spinner'
+      ];
+      return !sels.some(sel => {
+        const el = document.querySelector(sel);
+        return el && el.offsetParent !== null;
+      });
+    """))
+
+
 
 
 def click_history_card_by_vin(driver, vin, timeout=40):
@@ -540,23 +562,31 @@ else:
 
 print(f"📁 Using download dir: {DOWNLOAD_DIR}")
 
-def set_mat_select_by_text(data_cy: str, text: str):
+def set_mat_select_by_text(driver, wait, data_cy: str, text: str):
     # open the mat-select
     trigger = wait.until(EC.element_to_be_clickable((
         By.CSS_SELECTOR, f"mat-select[data-cy='{data_cy}'] .mat-select-trigger"
     )))
+    driver.execute_script("arguments[0].scrollIntoView({block:'center'});", trigger)
     driver.execute_script("arguments[0].click();", trigger)
 
-    # pick the option from the overlay
+    # wait for backdrop to show (overlay opened)
+    WebDriverWait(driver, 10).until(lambda d: d.execute_script("""
+      return !!document.querySelector('.cdk-overlay-backdrop.cdk-overlay-backdrop-showing');
+    """))
+
+    # click the option
     option = wait.until(EC.element_to_be_clickable((
         By.XPATH, f"//mat-option//span[normalize-space()='{text}']"
     )))
     driver.execute_script("arguments[0].click();", option)
 
-    # confirm the selection shows in the trigger
-    wait.until(lambda d: text in d.find_element(
-        By.CSS_SELECTOR, f"mat-select[data-cy='{data_cy}']"
-    ).text)
+    # close overlay + wait it’s gone
+    close_overlays(driver)
+
+    # OPTIONAL but recommended: wait table refresh after changing page size
+    wait_inventory_refresh(driver, timeout=45)
+
 
 
 def back_to_openlane(driver, main_handle):
@@ -566,6 +596,83 @@ def back_to_openlane(driver, main_handle):
             driver.switch_to.window(h)
             driver.close()
     driver.switch_to.window(main_handle)
+
+def set_option_selected(driver, wait, text, want=True, timeout=20):
+    opt = WebDriverWait(driver, timeout).until(EC.presence_of_element_located((
+        By.XPATH, f"//mat-list-option[.//div[contains(@class,'mat-list-text') and normalize-space()='{text}']]"
+    )))
+    selected = (opt.get_attribute("aria-selected") or "").lower() == "true" or "mat-selected" in (opt.get_attribute("class") or "")
+    if selected != want:
+        driver.execute_script("arguments[0].click();", opt)
+
+
+def _toggle_status_option(driver, wait, text, timeout=20):
+    # find the mat-list-option row that contains the label text
+    opt = WebDriverWait(driver, timeout).until(EC.presence_of_element_located((
+        By.XPATH, f"//mat-list-option[.//div[contains(@class,'mat-list-text') and normalize-space()='{text}']]"
+    )))
+    # only click if not already selected
+    selected = (opt.get_attribute("aria-selected") or "").lower() == "true" or "mat-selected" in (opt.get_attribute("class") or "")
+    if not selected:
+        _js_click(driver, opt)
+
+def set_status_filters(driver, wait):
+    _wait_no_overlay(driver, wait)
+
+    btn = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "button[data-cy='inventory-status-filter-trigger']")))
+    try:
+        wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "button[data-cy='inventory-status-filter-trigger']"))).click()
+    except (ElementClickInterceptedException, StaleElementReferenceException):
+        _js_click(driver, btn)
+
+    set_option_selected(driver, wait, "In Stock", True)
+    set_option_selected(driver, wait, "Coming Soon", True)
+    set_option_selected(driver, wait, "In Trade", False)
+    set_option_selected(driver, wait, "Deal Pending", False)
+
+    # close the dropdown
+    driver.find_element(By.TAG_NAME, "body").send_keys(Keys.ESCAPE)
+
+def close_overlays(driver, timeout=30):
+    try:
+        driver.find_element(By.TAG_NAME, "body").send_keys(Keys.ESCAPE)
+    except Exception:
+        pass
+
+    WebDriverWait(driver, timeout).until(lambda d: d.execute_script("""
+      const b = document.querySelector('.cdk-overlay-backdrop.cdk-overlay-backdrop-showing');
+      return !b;
+    """))
+
+def wait_no_backdrop(driver, timeout=30):
+    WebDriverWait(driver, timeout).until(lambda d: d.execute_script("""
+      const b = document.querySelector('.cdk-overlay-backdrop.cdk-overlay-backdrop-showing');
+      if (!b) return true;
+      // if it's in DOM but not visible, treat as gone
+      const style = window.getComputedStyle(b);
+      return (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0');
+    """))
+def wait_inventory_refresh(driver, timeout=45):
+    WebDriverWait(driver, timeout).until(lambda d: d.execute_script(r"""
+      // 1) no visible overlay/backdrop/spinner
+      const blockers = [
+        '.pg-loading-center-middle',
+        '.cdk-overlay-backdrop.cdk-overlay-backdrop-showing',
+        '.mat-progress-spinner',
+        'mat-spinner'
+      ];
+      for (const sel of blockers) {
+        const el = document.querySelector(sel);
+        if (el && el.offsetParent !== null) return false;
+      }
+
+      // 2) inventory table exists and has rendered rows (tbody tr)
+      const table = document.querySelector('table#inventory-table');
+      if (!table) return false;
+
+      const rows = table.querySelectorAll('tbody tr');
+      return rows.length > 0;
+    """))
 
 def filter_order_history_by_vin(driver, vin: str,timeout=20):
     vin = (vin or "").strip().upper()
@@ -636,22 +743,36 @@ try:
     # Step 2: Navigate to inventory page
     driver.get(INVENTORY_PAGE_URL)
     print("Waiting for inventory list to load...")
-    WebDriverWait(driver, 20).until(EC.presence_of_element_located((By.ID, "select-all")))
-    time.sleep(1)
+    wait = WebDriverWait(driver, 20)
 
-    # Step 3: Open the field selector dropdown
+    
+    WebDriverWait(driver, 30).until(lambda d: d.execute_script("""
+    const b = document.querySelector('.cdk-overlay-backdrop.cdk-overlay-backdrop-showing');
+    return !b;
+    """))
+       
+    set_status_filters(driver, wait)
+    time.sleep(3)
+    driver.find_element(By.TAG_NAME, "body").send_keys(Keys.ESCAPE)
+    wait_no_backdrop(driver, 30)   # from earlier
+
+    wait.until(EC.presence_of_element_located((By.ID, "select-all")))
+
+    
+
+
+    
     print("Opening field selector dropdown...")
     dropdown_button = WebDriverWait(driver, 15).until(
         EC.element_to_be_clickable((By.CSS_SELECTOR, "button#colDropdown"))
     )
-    dropdown_button.click()
-    time.sleep(1)
+    driver.execute_script("arguments[0].scrollIntoView({block:'center'}); arguments[0].click();", dropdown_button)
 
-    # Step 4: Ensure required fields are checked
+        # Step 4: Ensure required fields are checked
     fields_to_check = [
-        "vin", "description", "trim", "vehicle type", "drive", "transmission",
-        "cylinders", "colour", "odometer", "List price", "salePrice", "images"
-    ]
+            "vin", "description", "trim", "vehicle type", "drive", "transmission",
+            "cylinders", "colour", "odometer", "List price", "salePrice", "images"
+        ]
 
     checkboxes = driver.find_elements(By.CSS_SELECTOR, "ul.dropdown-menu.show input[type='checkbox']")
     labels = driver.find_elements(By.CSS_SELECTOR, "ul.dropdown-menu.show .custom-control-label")
@@ -666,29 +787,35 @@ try:
 
     time.sleep(2)
 
+    driver.find_element(By.TAG_NAME, "body").send_keys(Keys.ESCAPE)
+    time.sleep(0.3)
+
     
     print("Changing page size to 100...")
 
-    wait = WebDriverWait(driver, 20)
 
-
-
-    set_mat_select_by_text("page-count", "100")
+    set_mat_select_by_text(driver, wait,"page-count", "100")
 
     # Wait for the page to refresh with 100 cars
     time.sleep(3)
 
+   
+
     # Step 5: Click 'Select All' checkbox    
     print("Clicking select-all checkbox...")
-    select_all = driver.find_element(By.ID, "select-all")
+    # wait until the table + select-all is actually clickable
+    select_all = WebDriverWait(driver, 30).until(
+    EC.presence_of_element_located((By.CSS_SELECTOR, "input#select-all"))
+)
     driver.execute_script("""
-        arguments[0].checked = true;
-        arguments[0].setAttribute('ng-reflect-model', 'true');
-        arguments[0].dispatchEvent(new Event('input'));
-        arguments[0].dispatchEvent(new Event('change'));
+    const cb = arguments[0];
+    cb.scrollIntoView({block:'center'});
+    if (!cb.checked) cb.click();
+    cb.dispatchEvent(new Event('change', {bubbles:true}));
     """, select_all)
 
-    time.sleep(2)
+    close_overlays(driver)
+    wait_inventory_refresh(driver, timeout=45)  
 
     # Step 6: Click Export button
     export_button = WebDriverWait(driver, 15).until(
@@ -698,7 +825,7 @@ try:
     print("Exporting inventory...")
 
     # Step 7: Wait for download
-    time.sleep(10)
+    time.sleep(5)
 
 
     
@@ -742,7 +869,6 @@ try:
     for v in bad[:25]:
         print("BAD", repr(v), "len=", len(v))
 
-    wait = WebDriverWait(driver, 25)
     login_openlane(driver, wait)   # login ONCE
     OPENLANE_HANDLE = driver.current_window_handle
 
