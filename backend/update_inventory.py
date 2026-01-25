@@ -958,8 +958,8 @@ try:
 
 
     def ftp_cwd_p(ftp, path: str):
-        parts = [p for p in path.strip("/").split("/") if p]
-        for part in parts:
+        # Make dirs and cd into them, relative to current dir
+        for part in [p for p in path.strip("/").split("/") if p]:
             try:
                 ftp.cwd(part)
             except Exception:
@@ -972,6 +972,8 @@ try:
     print("Uploading to FTP...")
     with FTP(FTP_HOST) as ftp:
         ftp.login(FTP_USER, FTP_PASS)
+        print("PWD at login:", ftp.pwd())
+        print("Root listing:", ftp.nlst())
 
         # 1) Upload inventory.csv to web root (adjust if your host needs public_html/)
         base_dir = ftp.pwd()  # this is the directory inventory.csv will be uploaded into
@@ -981,11 +983,14 @@ try:
         with open(final_path, "rb") as f:
             ftp.storbinary("STOR inventory.csv", f)
 
+        print("After inventory upload, PWD:", ftp.pwd())
 
-        ftp.cwd(base_dir)          # make sure we’re back at the same level
+
         ftp_cwd_p(ftp, "carfax")   # create + enter carfax folder
+        print("Uploading PDFs into:", ftp.pwd())  # should be .../public_html/carfax
 
-        pdfs = sorted(CARFAX_DIR.glob("*_carfax.pdf"))
+
+        pdfs = sorted(Path(CARFAX_DIR).glob("*_carfax.pdf"))
         print(f"Uploading {len(pdfs)} PDFs to {base_dir}/carfax ...")
 
         for p in pdfs:
