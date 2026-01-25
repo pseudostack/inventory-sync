@@ -159,13 +159,6 @@ def download_file(url: str, out_path: str):
             if chunk:
                 f.write(chunk)
 
-def last4(vin: str) -> str:
-    vin = (vin or "").strip()
-    return vin[-4:] if len(vin) >= 4 else vin
-
-def carfax_path_for_vin(vin: str) -> Path:
-    return CARFAX_DIR / f"{last4(vin)}_carfax.pdf"
-
 def normalize_vin(v) -> str:
     s = str(v).strip()
     s = re.sub(r"[^A-Za-z0-9]", "", s)
@@ -451,13 +444,14 @@ def download_carfax_for_vin(driver, wait, vin: str, download_dir: str, carfax_di
         return False
 
     def make_name(v: str):
-        if name_mode == "first4":
-            key = v[:4]
-        elif name_mode == "full":
-            key = v
-        else:
-            key = v[-4:]
-        return f"{vin}_carfax.pdf"
+    v = (v or "").strip().upper()
+    if name_mode == "first4":
+        key = v[:4]
+    elif name_mode == "last4":
+        key = v[-4:]
+    else:  # "full"
+        key = v
+    return f"{key}_carfax.pdf"
 
     target_path = os.path.join(carfax_dir, make_name(vin))
     os.makedirs(carfax_dir, exist_ok=True)
@@ -871,7 +865,8 @@ try:
     if "VIN" not in df.columns and "vin" in df.columns:
         df = df.rename(columns={"vin": "VIN"})
 
-    vins = [str(v).strip().upper() for v in df["VIN"].dropna().tolist()]
+    vins = [normalize_vin(v) for v in df["VIN"].dropna().tolist()]
+    vins = [v for v in vins if len(v) == 17]  # keep only valid VINs
 
     print("VIN count:", len(vins))
     print("First 25 VINs:")
@@ -901,9 +896,10 @@ try:
             print("carfax for this vin ", vin, " doesn't exist,")
             print("Before download, URL is:", driver.current_url)
 
+            #name mode can be last4, first4, or full
             ok = download_carfax_for_vin(
-                driver, wait, vin, DOWNLOAD_DIR, str(CARFAX_DIR),
-                name_mode="last4", main_handle=OPENLANE_HANDLE
+            driver, wait, vin, DOWNLOAD_DIR, str(CARFAX_DIR),
+            name_mode="full", main_handle=OPENLANE_HANDLE
             )
 
             print(vin, "carfax:", "OK" if ok else "FAILED")
