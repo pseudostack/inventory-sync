@@ -160,9 +160,10 @@ def download_file(url: str, out_path: str):
                 f.write(chunk)
 
 def normalize_vin(v) -> str:
-    s = str(v).strip()
-    s = re.sub(r"[^A-Za-z0-9]", "", s)
+    s = str(v or "").strip().upper()
+    s = re.sub(r"[^A-Z0-9]", "", s)
     return s
+
 
 def login_openlane(driver, wait):
     driver.get(OPENLANE_URL)
@@ -444,14 +445,14 @@ def download_carfax_for_vin(driver, wait, vin: str, download_dir: str, carfax_di
         return False
 
     def make_name(v: str):
-    v = (v or "").strip().upper()
-    if name_mode == "first4":
-        key = v[:4]
-    elif name_mode == "last4":
-        key = v[-4:]
-    else:  # "full"
-        key = v
-    return f"{key}_carfax.pdf"
+        v = (v or "").strip().upper()
+        if name_mode == "first4":
+            key = v[:4]
+        elif name_mode == "last4":
+            key = v[-4:]
+        else:  # "full"
+            key = v
+        return f"{key}_carfax.pdf"
 
     target_path = os.path.join(carfax_dir, make_name(vin))
     os.makedirs(carfax_dir, exist_ok=True)
@@ -887,7 +888,8 @@ try:
         print("\nProcessing VIN:", repr(vin), "len=", len(vin), "last8=", vin[-8:])
 
         try:
-            target_pdf = CARFAX_DIR / f"{vin}_carfax.pdf"
+            target_pdf = Path(FLASK_CARFAX_DIR) / f"{vin}_carfax.pdf"
+
 
             if target_pdf.exists() and target_pdf.stat().st_size > 0:
                 print("vin exists, skipping")
@@ -898,7 +900,7 @@ try:
 
             #name mode can be last4, first4, or full
             ok = download_carfax_for_vin(
-            driver, wait, vin, DOWNLOAD_DIR, str(CARFAX_DIR),
+            driver, wait, vin, DOWNLOAD_DIR, FLASK_CARFAX_DIR,
             name_mode="full", main_handle=OPENLANE_HANDLE
             )
 
