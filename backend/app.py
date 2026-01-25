@@ -326,18 +326,20 @@ def admin_carfax():
             df["vin"] = df["VIN"]
 
         # make sure Links is always a string (no NaN floats)
+        # normalize links column name to "Links"
+        links_col = next((c for c in df.columns if c.lower() == "links"), None)
+        if links_col and links_col != "Links":
+            df = df.rename(columns={links_col: "Links"})
         if "Links" not in df.columns:
             df["Links"] = ""
-        else:
-            df["Links"] = df["Links"].fillna("").astype(str)
+        df["Links"] = df["Links"].fillna("").astype(str)
 
         cars = df.to_dict(orient='records')
         for car in cars:
             vin = (car.get("vin") or "").strip()
             if not vin:
                 continue
-            last4 = vin[-4:]
-            fname = f"{last4}_carfax.pdf"
+            fname = f"{vin}_carfax.pdf"
             fpath = os.path.join(CARFAX_FOLDER, fname)
             if os.path.exists(fpath):
                 car["Links"] = f"/static/carfax/{fname}"
@@ -399,8 +401,7 @@ def upload_carfax():
     file = request.files.get('file')
 
     if vin and file and allowed_file(file.filename, allowed_ext={'pdf'}):
-        last4 = vin[-4:]
-        filename = f"{last4}_carfax.pdf"
+        filename = f"{vin}_carfax.pdf"
         path = os.path.join(CARFAX_FOLDER, filename)
         file.save(path)
 

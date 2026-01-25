@@ -457,7 +457,7 @@ def download_carfax_for_vin(driver, wait, vin: str, download_dir: str, carfax_di
             key = v
         else:
             key = v[-4:]
-        return f"{key}_carfax.pdf"
+        return f"{vin}_carfax.pdf"
 
     target_path = os.path.join(carfax_dir, make_name(vin))
     os.makedirs(carfax_dir, exist_ok=True)
@@ -892,7 +892,7 @@ try:
         print("\nProcessing VIN:", repr(vin), "len=", len(vin), "last8=", vin[-8:])
 
         try:
-            target_pdf = CARFAX_DIR / f"{vin[-4:]}_carfax.pdf"
+            target_pdf = CARFAX_DIR / f"{vin}_carfax.pdf"
 
             if target_pdf.exists() and target_pdf.stat().st_size > 0:
                 print("vin exists, skipping")
