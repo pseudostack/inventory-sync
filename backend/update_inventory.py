@@ -71,16 +71,14 @@ def newest_file(pattern: str):
     files = glob.glob(pattern)
     return max(files, key=os.path.getmtime) if files else None
 
-def wait_for_new_pdf(download_dir: str, timeout: int = 60):
-    start_ts = time.time()
 
     while time.time() - start_ts < timeout:
         # still downloading?
-        if glob.glob(os.path.join(download_dir, "*.crdownload")):
+        if glob.glob(os.path.join(DOWNLOAD_DIR, "*.crdownload")):
             time.sleep(0.3)
             continue
 
-        pdfs = glob.glob(os.path.join(download_dir, "*.pdf"))
+        pdfs = glob.glob(os.path.join(DOWNLOAD_DIR, "*.pdf"))
         if pdfs:
             newest = max(pdfs, key=os.path.getmtime)
             if os.path.getmtime(newest) >= start_ts - 1:
@@ -1005,7 +1003,7 @@ try:
         local_pdfs = sorted(Path(CARFAX_DIR).glob("*_carfax.pdf"))
         print(f"Uploading {len(local_pdfs)} PDFs to {ftp.pwd()} ...")
 
-        for p in pdfs:
+        for p in local_pdfs:
             if p.stat().st_size <= 0:
                 continue
             with open(p, "rb") as f:
