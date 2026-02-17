@@ -823,32 +823,63 @@ try:
 
     
     print("Opening field selector dropdown...")
-    dropdown_button = WebDriverWait(driver, 15).until(
-        EC.element_to_be_clickable((By.CSS_SELECTOR, "button#colDropdown"))
-    )
+    dropdown_button = wait.until(EC.element_to_be_clickable((By.ID, "colDropdown")))
     driver.execute_script("arguments[0].scrollIntoView({block:'center'}); arguments[0].click();", dropdown_button)
 
-        # Step 4: Ensure required fields are checked
+    # 2. Define the list of columns you NEED (Case doesn't matter now)
+    # Note: 'images' is lowercase in your screenshot, 'description' is lowercase
     fields_to_check = [
-            "vin", "description", "trim", "vehicle type", "drive", "transmission",
-            "cylinders", "colour", "odometer", "List price", "salePrice", "images"
-        ]
+        "vin", "description", "trim", "vehicle type", "drive", "transmission",
+        "cylinders", "colour", "odometer", "list price", "sale price", "images"
+    ]
 
-    checkboxes = driver.find_elements(By.CSS_SELECTOR, "ul.dropdown-menu.show input[type='checkbox']")
-    labels = driver.find_elements(By.CSS_SELECTOR, "ul.dropdown-menu.show .custom-control-label")
+    print("Selecting columns...")
+    
+    # 3. Wait for the menu to appear
+    wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "ul.dropdown-menu.show")))
+    
+    # Small pause to ensure animation finishes
+    time.sleep(0.5)
 
-    for i, label in enumerate(labels):
-        if label.text.strip().lower() in [f.lower() for f in fields_to_check]:
-            box = checkboxes[i]
-            is_checked = box.get_attribute("ng-reflect-model") == "true"
+    for field in fields_to_check:
+        try:
+            # ROBUST XPATH:
+            # 1. Find the <ul> menu
+            # 2. Find any <span> with class 'custom-control-label'
+            # 3. Match text case-insensitively (translate to lowercase)
+            xpath = (
+                f"//ul[contains(@class, 'dropdown-menu')]"
+                f"//span[contains(@class, 'custom-control-label')]"
+                f"[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), '{field.lower()}')]"
+            )
+            
+            # Find the text span (e.g., "description")
+            target_span = driver.find_element(By.XPATH, xpath)
+            
+            # Find the actual checkbox input (it is the sibling BEFORE the span)
+            # Structure: <input> ... <span class="custom-control-label">Text</span>
+            checkbox = target_span.find_element(By.XPATH, "./preceding-sibling::input[@type='checkbox']")
+            
+            # Check if it is selected
+            # In your screenshot, the input has 'ng-valid', but we check the standard .is_selected() first
+            is_checked = checkbox.is_selected()
+            
+            # Angular sometimes hides the real state, so check if the input has a specific class 
+            # or if the label needs clicking.
             if not is_checked:
-                driver.execute_script("arguments[0].click();", box)
-                print(f"✅ Enabled export field: {label.text.strip()}")
+                # Click the LABEL (parent), not the input, because the input might be hidden/custom
+                label_element = target_span.find_element(By.XPATH, "./..") # Go up to <label>
+                driver.execute_script("arguments[0].click();", label_element)
+                print(f"✅ Checked: {field}")
+            else:
+                print(f"⏭️ Already checked: {field}")
 
-    time.sleep(1)
+        except Exception as e:
+            # Don't crash if one is missing (e.g., 'sale price' might not exist)
+            print(f"⚠️ Could not find column '{field}' (It might be named differently or hidden).")
 
+    # 4. Close dropdown
     driver.find_element(By.TAG_NAME, "body").send_keys(Keys.ESCAPE)
-    time.sleep(0.3)
 
     
     print("Changing page size to 100...")
