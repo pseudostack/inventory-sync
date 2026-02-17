@@ -729,18 +729,21 @@ prefs = {
     "download.prompt_for_download": False,
     "download.directory_upgrade": True,
     "safebrowsing.enabled": True,
-    "plugins.always_open_pdf_externally": True,  # ✅ force download instead of Chrome PDF viewer
+    "plugins.always_open_pdf_externally": True,
 }
 
 chrome_options.add_experimental_option("prefs", prefs)
 chrome_options.add_argument('--no-sandbox')
 chrome_options.add_argument('--disable-dev-shm-usage')
+chrome_options.add_argument("--start-maximized") # Force max window
+chrome_options.add_argument("--window-size=1920,1080")
+
+chrome_options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
 
 if platform.system() != "Windows":
     chrome_options.add_argument("--headless=new")
 
-chrome_options.add_argument("--disable-gpu")  # good practice for Windows
-chrome_options.add_argument("--window-size=1920,1080")  # optional, can help with layout
+chrome_options.add_argument("--disable-gpu")
 chrome_options.add_argument(f"--user-data-dir={tempfile.mkdtemp()}")
 driver = webdriver.Chrome(options=chrome_options)
 
