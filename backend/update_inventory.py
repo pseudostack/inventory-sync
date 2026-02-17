@@ -564,28 +564,43 @@ else:
 print(f"📁 Using download dir: {DOWNLOAD_DIR}")
 
 def set_mat_select_by_text(driver, wait, data_cy: str, text: str):
-    # open the mat-select
+    print(f"Attempting to set {data_cy} to '{text}'...")
+
+    # 1. Click the dropdown trigger (Updated selector for new Angular Material)
+    # The old '.mat-select-trigger' class is gone. We now click the <mat-select> itself.
     trigger = wait.until(EC.element_to_be_clickable((
-        By.CSS_SELECTOR, f"mat-select[data-cy='{data_cy}'] .mat-select-trigger"
+        By.CSS_SELECTOR, f"mat-select[data-cy='{data_cy}']"
     )))
     driver.execute_script("arguments[0].scrollIntoView({block:'center'});", trigger)
     driver.execute_script("arguments[0].click();", trigger)
 
-    # wait for backdrop to show (overlay opened)
-    WebDriverWait(driver, 10).until(lambda d: d.execute_script("""
-      return !!document.querySelector('.cdk-overlay-backdrop.cdk-overlay-backdrop-showing');
-    """))
+    # 2. Wait for the options panel to open
+    # We wait for <mat-option> elements to appear in the DOM
+    wait.until(EC.presence_of_element_located((By.TAG_NAME, "mat-option")))
 
-    # click the option
-    option = wait.until(EC.element_to_be_clickable((
-        By.XPATH, f"//mat-option//span[normalize-space()='{text}']"
-    )))
-    driver.execute_script("arguments[0].click();", option)
+    # 3. Find and click the specific option
+    # New XPath: Finds a <mat-option> that contains the text "100" (or whatever you pass)
+    # We use "contains(., text)" to find the text anywhere inside the option, 
+    # ignoring the specific nested <span> structure.
+    xpath = f"//mat-option[contains(., '{text}')]"
+    
+    try:
+        option = wait.until(EC.element_to_be_clickable((By.XPATH, xpath)))
+        driver.execute_script("arguments[0].click();", option)
+        print(f"Selected option '{text}'")
+    except TimeoutException:
+        # Fallback: Print all available options to debug
+        all_options = driver.find_elements(By.TAG_NAME, "mat-option")
+        texts = [o.text for o in all_options]
+        print(f"⚠️ Failed to find option '{text}'. Available options: {texts}")
+        # Close the dropdown so the script doesn't get stuck
+        driver.find_element(By.TAG_NAME, "body").send_keys(Keys.ESCAPE)
+        raise
 
-    # close overlay + wait it’s gone
+    # 4. Wait for the overlay to disappear
     close_overlays(driver)
 
-    # OPTIONAL but recommended: wait table refresh after changing page size
+    # 5. Wait for the table to refresh (page count change usually triggers a reload)
     wait_inventory_refresh(driver, timeout=45)
 
 
@@ -598,13 +613,33 @@ def back_to_openlane(driver, main_handle):
             driver.close()
     driver.switch_to.window(main_handle)
 
-def set_option_selected(driver, wait, text, want=True, timeout=20):
-    opt = WebDriverWait(driver, timeout).until(EC.presence_of_element_located((
-        By.XPATH, f"//mat-list-option[.//div[contains(@class,'mat-list-text') and normalize-space()='{text}']]"
-    )))
-    selected = (opt.get_attribute("aria-selected") or "").lower() == "true" or "mat-selected" in (opt.get_attribute("class") or "")
-    if selected != want:
-        driver.execute_script("arguments[0].click();", opt)
+def set_option_selected(driver, wait, text, want=True, timeout=10):
+    # Updated XPath: Looks for ANY span inside mat-list-option containing the text
+    xpath = f"//mat-list-option[.//span[contains(text(), '{text}')]]"
+    
+    try:
+        opt = wait.until(EC.presence_of_element_located((By.XPATH, xpath)))
+        
+        # Scroll to it just in case
+        driver.execute_script("arguments[0].scrollIntoView({block:'center'});", opt)
+        
+        # Check if it is currently selected
+        # The screenshot shows 'aria-selected="true"' when selected
+        is_selected = (opt.get_attribute("aria-selected") or "").lower() == "true"
+        
+        if is_selected != want:
+            # Click it if it's not in the state we want
+            try:
+                opt.click()
+            except Exception:
+                # Fallback to JS click if blocked
+                driver.execute_script("arguments[0].click();", opt)
+                
+            print(f"Clicked '{text}' (Current: {is_selected} -> Want: {want})")
+            time.sleep(0.5) # Short pause for animation
+            
+    except TimeoutException:
+        print(f"⚠️ Could not find filter option '{text}'! The menu might not be open.")
 
 
 def _toggle_status_option(driver, wait, text, timeout=20):
@@ -618,20 +653,24 @@ def _toggle_status_option(driver, wait, text, timeout=20):
         _js_click(driver, opt)
 
 def set_status_filters(driver, wait):
-    _wait_no_overlay(driver, wait)
+    # 1. Force the menu open
+    trigger_selector = "button[data-cy='inventory-status-filter-trigger']"
+    print("Attempting to open Status Filter menu...")
+    
+    btn = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, trigger_selector)))
+    driver.execute_script("arguments[0].click();", btn)
 
-    btn = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "button[data-cy='inventory-status-filter-trigger']")))
-    try:
-        wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "button[data-cy='inventory-status-filter-trigger']"))).click()
-    except (ElementClickInterceptedException, StaleElementReferenceException):
-        _js_click(driver, btn)
+    # 2. Wait for the options to actually appear in the DOM
+    # We look for the exact element from your screenshot
+    wait.until(EC.presence_of_element_located((By.TAG_NAME, "mat-list-option")))
 
+    # 3. Now select the items using the new function
     set_option_selected(driver, wait, "In Stock", True)
     set_option_selected(driver, wait, "Coming Soon", True)
     set_option_selected(driver, wait, "In Trade", False)
     set_option_selected(driver, wait, "Deal Pending", False)
 
-    # close the dropdown
+    # 4. Close the menu
     driver.find_element(By.TAG_NAME, "body").send_keys(Keys.ESCAPE)
 
 def close_overlays(driver, timeout=5):
