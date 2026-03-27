@@ -881,6 +881,9 @@ try:
     # 4. Close dropdown
     driver.find_element(By.TAG_NAME, "body").send_keys(Keys.ESCAPE)
 
+
+    #wait for selected options to take effect (for example images)
+    time.sleep(3)
     
     print("Changing page size to 100...")
 
@@ -888,7 +891,7 @@ try:
     set_mat_select_by_text(driver, wait,"page-count", "100")
 
     # Wait for the page to refresh with 100 cars
-    time.sleep(1)
+    time.sleep(3)
 
    
 
